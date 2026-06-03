@@ -1893,7 +1893,10 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
   };
 
   const uploadFileChunks = async (file, onProgress) => {
-    const CHUNK_SIZE = 1024 * 1024;
+    // 每片会 base64 编码后再 POST(膨胀 ~1.37×)+ JSON 包裹。512KB raw → ~700KB body,
+    // 稳稳低于 nginx 默认 client_max_body_size=1MB。原来 1MB raw → ~1.4MB body 会被默认
+    // nginx 直接拒/掐连接,浏览器表现为「网络异常 Failed to fetch」—— 自建/开源用户必踩。
+    const CHUNK_SIZE = 512 * 1024;
     const totalBytes = file.size;
     const totalChunks = Math.max(1, Math.ceil(totalBytes / CHUNK_SIZE));
     onProgress?.({ stage: "init", done: 0, total: totalChunks, percent: 0 });
@@ -2035,8 +2038,15 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       setPreviewProgress({ value: 100, label: t('scripts.import.preview_done') });
     } catch (e) {
       if (uploadId) { try { await window.api.uploads.cancel(uploadId); } catch (_) {} }
-      const detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
-      window.__apiToast?.(t('scripts.toast.preview_fail'), { kind: "danger", detail, duration: 5000 });
+      let detail = (e && (e.message || (e.payload && (e.payload.error || e.payload.detail)))) || t('scripts.toast.unknown_error');
+      // 网络级失败(fetch 直接抛,没拿到响应)对自建/反代用户最常见的原因是反向代理
+      // (nginx/caddy)的请求体积上限太小,或后端没起。给一句可操作的提示,别让用户只看到
+      // 一个无解的「Failed to fetch」。
+      const isNetErr = (e && (e.code === 'network' || e.status === 0)) || /Failed to fetch|NetworkError|网络异常/i.test(String(detail));
+      if (isNetErr) {
+        detail = `${detail} —— 若为自建/反向代理部署,请检查后端是否在运行,以及 nginx/caddy 的 client_max_body_size(建议 ≥ 50m)。`;
+      }
+      window.__apiToast?.(t('scripts.toast.preview_fail'), { kind: "danger", detail, duration: 8000 });
       setEstimate({
         file: { name: selectedFile.name, size: selectedFile.size, chapters: 0, words: 0 },
         chapters: 0, words: 0,
