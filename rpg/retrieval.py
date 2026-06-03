@@ -210,8 +210,13 @@ def load_chapter_facts(chapter_min: int | None, chapter_max: int | None, limit: 
         """, (chapter_min, chapter_max, limit))
         lines = []
         for chapter, title, time_label, summary, events_json in cur.fetchall():
-            events = json.loads(events_json or "[]")
-            event_text = "；".join(event.get("event", "") for event in events[:2] if event.get("event"))
+            # events_json 是 LLM 抽取列,可能畸形 JSON 或非 dict 列表。逐章 try:单章坏
+            # 只丢该章事件(仍出摘要),不让一个坏行丢掉整段章节摘要(与 worldbook 同隔离粒度)。
+            try:
+                events = json.loads(events_json or "[]")
+                event_text = "；".join(event.get("event", "") for event in events[:2] if isinstance(event, dict) and event.get("event"))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                event_text = ""
             lines.append(
                 f"第{chapter}章《{title}》｜{time_label}\n"
                 f"摘要：{summary[:180]}\n"
