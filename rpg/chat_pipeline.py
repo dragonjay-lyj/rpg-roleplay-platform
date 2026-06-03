@@ -716,6 +716,48 @@ async def run_rules_phase(
 # ---------------------------------------------------------------------------
 
 
+def _apply_gm_json_ops(
+    *,
+    state: "GameState",
+    response_with_ops: str,
+    api_user: dict[str, Any] | None,
+    active_script_id: Callable[[dict[str, Any] | None], int | None],
+    ctx: "PipelineContext",
+    extractor_active: bool,
+) -> list[str]:
+    """把 GM 的 JSON op(set/append/overwrite/question/hypothesis/...)经 ChatWriteContext
+    确定性 apply 回内存 state,返回 update 文案列表(已含 directive_updates 前缀)。
+
+    sync 与 async 两条后处理路径**共用** —— async 早退前也必须调它。否则 GM 经
+    `{"op":"set/append/overwrite/question/...}` 写的 player.current_location / world.time /
+    memory.resources / memory.main_quest / relationships.* / 选项 / 推测全部丢失
+    (worker 进程 state_data={} 是 no-op,补不回来)。dispatcher 工具调用走的是流式内联
+    apply,不受影响,但 JSON op 是 GM 写核心每轮状态的主通道。
+    """
+    import secrets as _ctx_secrets
+
+    from state_write_context import (
+        ChatWriteContext,
+        clear_context as _clear_write_ctx,
+        set_context as _set_write_ctx,
+    )
+    _json_op_ctx = ChatWriteContext(
+        user_id=int(api_user.get("id")) if api_user else 0,
+        save_id=ctx.early_active_save_id or 0,
+        script_id=active_script_id(api_user),
+        trace_id=f"gm-jsop-{_ctx_secrets.token_urlsafe(6)}",
+        origin="llm_chat_json_op",
+    )
+    _ctx_token = _set_write_ctx(_json_op_ctx)
+    try:
+        # task 69:extractor 开启时让 state.py 跳过 regex 兜底
+        return ctx.directive_updates + state.apply_structured_updates(
+            response_with_ops, skip_regex_fallback=extractor_active,
+        )
+    finally:
+        _clear_write_ctx(_ctx_token)
+
+
 async def run_gm_phase(
     ctx: PipelineContext,
     *,
@@ -942,8 +984,69 @@ async def run_gm_phase(
             _POSTPROC_FALLBACK = False
 
         if not _POSTPROC_FALLBACK:
-            # 不等后处理,直接设 ctx._updates 让 phase 5 能正常落档
-            ctx._updates = ctx.directive_updates[:]
+            # ── async 模式:确定性后处理必须仍在主进程内联跑,不能随早退一起跳过 ──
+            # 早退只该省掉"费时 + 不依赖实时内存 state 的 LLM 任务"(acceptance verifier /
+            # black_swan,上面已 enqueue 给独立 worker)。但下面三项是确定性、<50ms、且必须
+            # 改写【实时内存 state】 —— worker 进程拿不到内存 state(payload state_data={} 是
+            # no-op),一旦随早退跳过就永久丢失:
+            #   1. apply_structured_updates —— GM 经 JSON op 写的 location/time/resources/
+            #      main_quest/relationships/选项/推测(GM 写每轮核心状态的主通道)
+            #   2. timeline_guard regex —— 时间跳跃禁词检测 + audit
+            #   3. cliche regex —— 套路比喻检测 notice
+            # 故此处内联补跑。相对 sync 路径的唯一退化:extractor(LLM 二次抽取,本就在
+            # worker 内 no-op)与 acceptance retry 重写(依赖内存 state + GM 实例)不在 async
+            # 跑 —— extractor 直接跳过(GM 自带 JSON op 已 apply),acceptance 退化为仅 worker
+            # 内审计、不 retry(下面 log 标注)。
+            log.info("[chat] async postproc: 内联跑确定性后处理(apply/guard),LLM 任务已入队;"
+                     "acceptance retry 退化为不重写(仅 worker 审计)")
+            try:
+                from agents.timeline_narrative_guard import (
+                    detect_time_jump_violations,
+                    record_violations_to_audit,
+                )
+                _tj_violations = await asyncio.to_thread(
+                    detect_time_jump_violations, response, state,
+                )
+                if _tj_violations:
+                    await asyncio.to_thread(record_violations_to_audit, state, _tj_violations)
+                    yield ("agent", {
+                        "phase": "timeline_guard",
+                        "message": f"GM 时间跳跃叙事检测到 {len(_tj_violations)} 处禁词(穿越/醒来/拨回 等过渡叙事)",
+                        "status": "warning",
+                        "elapsed_ms": 0,
+                        "violations": [
+                            {"label": v.get("pattern_label"), "match": v.get("match")}
+                            for v in _tj_violations
+                        ],
+                    })
+            except Exception as _tg_err:
+                log.warning(f"[chat] async timeline_guard 跳过: {_tg_err}")
+
+            try:
+                from agents.timeline_narrative_guard import detect_cliche_violations
+                _cliche = detect_cliche_violations(response)
+            except Exception:
+                _cliche = []
+            if _cliche:
+                yield ("cliche_notice", {
+                    "phrases": [v.get("match") for v in _cliche][:5],
+                    "labels": sorted({v.get("pattern_label") for v in _cliche}),
+                })
+
+            # 关键修复:GM JSON op 确定性写回(async 不跑 extractor → extractor_active=False
+            # → apply_structured_updates 保留 regex 兜底,把 GM 漏标的也尽量捞回)。
+            try:
+                ctx._updates = _apply_gm_json_ops(
+                    state=state,
+                    response_with_ops=response,
+                    api_user=api_user,
+                    active_script_id=active_script_id,
+                    ctx=ctx,
+                    extractor_active=False,
+                )
+            except Exception as _apply_err:
+                log.warning(f"[chat] async apply_structured_updates 失败,退回 directive_updates: {_apply_err}")
+                ctx._updates = ctx.directive_updates[:]
             return
     # ── 同步后处理路径 (sync 模式 or enqueue 失败降级) ─────────────────────
 
@@ -991,34 +1094,17 @@ async def run_gm_phase(
     response_with_ops = _post_results.get("response_with_ops") or response
     extractor_active = bool(_post_results.get("extractor_active"))
 
-    # task 87 Phase 6: 设置 chat write context,让 state.apply_state_write_typed 拿到
-    # user/save/trace,把 GM JSON op 直调 apply_state_write 路径转 dispatcher 工具调用。
-    import secrets as _ctx_secrets
-
-    from state_write_context import (
-        ChatWriteContext,
+    # task 87 Phase 6: 经 ChatWriteContext 把 GM JSON op 确定性 apply 回内存 state
+    # (apply_state_write_typed 拿到 user/save/trace → dispatcher 工具调用)。
+    # 与 async 早退路径共用 _apply_gm_json_ops,避免两处逻辑漂移。
+    updates = _apply_gm_json_ops(
+        state=state,
+        response_with_ops=response_with_ops,
+        api_user=api_user,
+        active_script_id=active_script_id,
+        ctx=ctx,
+        extractor_active=extractor_active,
     )
-    from state_write_context import (
-        clear_context as _clear_write_ctx,
-    )
-    from state_write_context import (
-        set_context as _set_write_ctx,
-    )
-    _json_op_ctx = ChatWriteContext(
-        user_id=int(api_user.get("id")) if api_user else 0,
-        save_id=ctx.early_active_save_id or 0,
-        script_id=active_script_id(api_user),
-        trace_id=f"gm-jsop-{_ctx_secrets.token_urlsafe(6)}",
-        origin="llm_chat_json_op",
-    )
-    _ctx_token = _set_write_ctx(_json_op_ctx)
-    try:
-        # task 69：extractor 开启时让 state.py 跳过 regex 兜底
-        updates = ctx.directive_updates + state.apply_structured_updates(
-            response_with_ops, skip_regex_fallback=extractor_active,
-        )
-    finally:
-        _clear_write_ctx(_ctx_token)
 
     # task 81 / 84 / iter#3: acceptance 自动验证 + retry once (硬 gate 化)
     #
