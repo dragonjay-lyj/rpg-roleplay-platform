@@ -1,5 +1,16 @@
 /* === Platform-specific styles, on top of tokens.css === */
 
+/* ── 移动健壮性基线(全局,桌面无副作用)──────────────────────────────
+   · text-size-adjust:阻止 iOS Safari 横屏时自动放大正文(放大后布局错位)。
+   · tap-highlight-color:去掉触屏点击时刺眼的蓝/灰高亮闪烁。
+   · touch-action: manipulation:去掉移动浏览器 300ms 点击延迟 + 禁双击缩放(按钮/链接),
+     桌面端无影响。 */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, a, [role="button"], .btn, .iconbtn, summary, label {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
 /* shell — task 104b: sidebar 列宽改成 auto (跟随 .pl-side 自己的 width),
    这样拖动时直接 mutate .pl-side.style.width 即可生效 (元素自身 inline
    style specificity 最高, 不会被父级 grid-template 覆盖)。 */
