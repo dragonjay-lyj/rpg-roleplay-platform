@@ -514,8 +514,21 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             time.sleep(30)
             continue
         if len(vecs) != len(rows):
-            log.warning("[embedding] vec count mismatch: got %d expected %d", len(vecs), len(rows))
-            break
+            # 行数不匹配(供应商异常)。原来直接 break → 整个 script 剩余 chunk 永不 embed
+            # 且静默(RAG 召回残缺)。改为:写入可匹配的前 N 对(保证推进),再继续下一批;
+            # 0 匹配才放弃(避免死循环)。
+            _n = min(len(vecs), len(rows))
+            log.error("[embedding] vec count mismatch: got %d expected %d (script_id=%s) — 写入前 %d 对后继续",
+                      len(vecs), len(rows), script_id, _n)
+            if _n == 0:
+                break
+            with connect() as db:
+                for r, v in zip(rows[:_n], vecs[:_n]):
+                    db.execute(
+                        "update document_chunks set embedding_vec = %s::vector, embedded_at = now() where id = %s",
+                        (_vec_literal(v), r["id"]),
+                    )
+            continue
 
         with connect() as db:
             for r, v in zip(rows, vecs):

@@ -180,7 +180,7 @@ def _sync_worldbook_entries(db, book: dict[str, Any], script: dict[str, Any], wo
                         str(entry.get("title") or "").strip(),
                         str(entry.get("title") or "").split(" · ")[0].split(" /")[0].split("（")[0].strip(),
                     ]) if k and len(k) > 1
-                ] or [str(entry.get("title") or "").strip()]),
+                ]),  # 标题空/过短 → keys 留空(不写 [""],否则空串会误匹配一切)
                 Jsonb(entry.get("regex_keys") or []),
                 entry["priority"],
                 entry["token_budget"],
