@@ -2769,6 +2769,13 @@ function ModuleModelsSection() {
                         />
                       );
                     })()}
+                    {mod.id === "embedder" && (
+                      <div style={{marginTop: 6, fontSize: 11, color: "var(--muted)"}}>
+                        ℹ️ 所有 embedding 统一输出 768 维(与向量库对齐;OpenAI/通义自动降维)。
+                        Anthropic、DeepSeek 无 embedding 接口,故不在此列。
+                        <strong> 切换 embedder 后,已嵌过的剧本需重新嵌入才会用新模型</strong>(旧向量与新模型不互通)。
+                      </div>
+                    )}
                   </td>
                 </tr>
               );

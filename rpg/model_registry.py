@@ -117,6 +117,11 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
                  "capabilities": ["text", "streaming", "image_input", "audio_input", "video_input", "file_input", "tools", "json_mode", "reasoning", "code_exec"]},
                 {"id": "gemini-2.5-flash", "real_name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash", "enabled": True,
                  "capabilities": ["text", "streaming", "image_input", "audio_input", "file_input", "tools", "json_mode"]},
+                # 向量嵌入(RAG)— 768 维,与 DB 向量列原生一致。text-embedding-004 是系统默认。
+                {"id": "text-embedding-004", "real_name": "text-embedding-004", "display_name": "Text Embedding 004 · 默认", "enabled": True,
+                 "capabilities": ["embedding"]},
+                {"id": "text-multilingual-embedding-002", "real_name": "text-multilingual-embedding-002", "display_name": "Multilingual Embedding 002", "enabled": True,
+                 "capabilities": ["embedding"]},
             ],
         },
         {
@@ -148,6 +153,12 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
                  "capabilities": ["text", "streaming", "image_input", "audio_input", "tools", "json_mode", "reasoning", "code_exec", "web_search"]},
                 {"id": "gpt-5.5-thinking", "real_name": "gpt-5.5-thinking", "display_name": "GPT-5.5 Thinking", "enabled": True,
                  "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]},
+                # 向量嵌入(RAG)— 支持 dimensions 降维到 768,与 DB 向量列对齐。
+                # (不收 ada-002:它不支持 dimensions,只能输出 1536 维,放不进 768 列。)
+                {"id": "text-embedding-3-small", "real_name": "text-embedding-3-small", "display_name": "Text Embedding 3 Small", "enabled": True,
+                 "capabilities": ["embedding"]},
+                {"id": "text-embedding-3-large", "real_name": "text-embedding-3-large", "display_name": "Text Embedding 3 Large", "enabled": True,
+                 "capabilities": ["embedding"]},
             ],
         },
         {
@@ -216,6 +227,10 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
                  "capabilities": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"]},
                 {"id": "qwen3.6-flash", "real_name": "qwen3.6-flash", "display_name": "Qwen 3.6 Flash", "enabled": True,
                  "capabilities": ["text", "streaming", "tools", "json_mode"]},
+                # 向量嵌入(RAG)— text-embedding-v3 支持 dimensions 降维到 768,经 compatible-mode
+                # 的 /embeddings(OpenAI 兼容)调用。
+                {"id": "text-embedding-v3", "real_name": "text-embedding-v3", "display_name": "Qwen Text Embedding v3", "enabled": True,
+                 "capabilities": ["embedding"]},
             ],
         },
         {
