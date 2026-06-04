@@ -1439,6 +1439,42 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # 用于「授权设备」与「个人令牌」分类展示(GitHub 式)。
         "alter table personal_access_tokens add column if not exists source text not null default 'manual'",
     ]),
+    (57, "compliance_dmca_csam_tables", [
+        # 修历史缺漏:admin DMCA 下架 / CSAM 举报合规端点查 dmca_takedowns / csam_reports,
+        # 但这两表从未被任何 migration 创建(v37 注释声称创建实则没有)→ 端点 500。
+        # 按 api/admin.py 端点用到的列补建。dmca_strikes 已在别处建,不在此处。
+        "create table if not exists dmca_takedowns ("
+        "  id bigserial primary key,"
+        "  complainant_name text not null default '',"
+        "  complainant_email text not null default '',"
+        "  infringing_url text not null default '',"
+        "  original_work_desc text not null default '',"
+        "  status text not null default 'open',"  # open|closed|restored|rejected|counter_received
+        "  notes text,"
+        "  created_by bigint references users(id) on delete set null,"
+        "  counter_received_at timestamptz,"
+        "  restore_after timestamptz,"
+        "  actioned_at timestamptz,"
+        "  actioned_by bigint references users(id) on delete set null,"
+        "  created_at timestamptz not null default now()"
+        ")",
+        "create index if not exists idx_dmca_takedowns_status on dmca_takedowns(status, created_at desc)",
+        "create table if not exists csam_reports ("
+        "  id bigserial primary key,"
+        "  reporter_id bigint references users(id) on delete set null,"
+        "  reported_user_id bigint references users(id) on delete set null,"
+        "  content_url text not null default '',"
+        "  description text not null default '',"
+        "  status text not null default 'open',"  # open|decided
+        "  decision text,"                          # founded|unfounded|escalate
+        "  decision_notes text,"
+        "  cybertip_report_id text,"
+        "  decided_at timestamptz,"
+        "  decided_by bigint references users(id) on delete set null,"
+        "  created_at timestamptz not null default now()"
+        ")",
+        "create index if not exists idx_csam_reports_status on csam_reports(status, created_at desc)",
+    ]),
 ]
 
 
