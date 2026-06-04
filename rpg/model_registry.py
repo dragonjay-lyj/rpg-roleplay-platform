@@ -345,7 +345,16 @@ def apply_user_overlay(catalog: dict[str, Any], user_id: int | None) -> dict[str
             # **不**用空清单覆盖全局好模型,保留全局菜单 —— 否则该用户该 provider 视图
             # 变空,first_user_model 兜底无可用模型可回退。
             if cleaned:
-                existing["models"] = cleaned
+                # 保留全局菜单里该 provider 人工策展的 embedding 模型:模型同步通常只抓
+                # chat 模型(provider 的 /models 多不列 embedding),若被 overlay 直接覆盖,
+                # RAG 向量模型选择器就会空 → 用户配了 key 也选不到 embedding。
+                synced_names = {(m.get("real_name") or m.get("id")) for m in cleaned}
+                curated_embeds = [
+                    m for m in (existing.get("models") or [])
+                    if "embedding" in (m.get("capabilities") or [])
+                    and (m.get("real_name") or m.get("id")) not in synced_names
+                ]
+                existing["models"] = cleaned + curated_embeds
             continue
         # 自建中转站:只有当用户确实配过该 provider 的凭证(带 base_url)才合成,
         # 避免悬空条目。base_url 来自用户凭证(per-user,已做 SSRF 校验)。
