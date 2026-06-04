@@ -16,10 +16,11 @@ export default defineConfig(({ mode }) => {
   };
 
   // ── SPA history fallback(仅 dev server)─────────────────────────────
-  // Platform 用 History API 路由(/settings、/saves、/profile 等)。vite dev 默认无
+  // Platform 用 History API 路由(/settings、/saves、/wall 等)。vite dev 默认无
   // SPA 回退,直接访问/刷新这些干净 URL 会 404 白屏。这里在 configureServer 注入
   // connect 中间件,把非 /api、非静态文件的请求回退到 Platform.html。
-  // 仅作用于 dev;生产构建由各自服务器做 history-fallback。
+  // 仅作用于 dev;preview/生产由各自服务器做 history-fallback,不受影响。
+  // (来自社区贡献者 xingzhiyou 的 PR #14)
   function spaHistoryFallbackPlugin() {
     return {
       name: 'spa-history-fallback',
