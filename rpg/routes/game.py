@@ -783,7 +783,24 @@ async def api_chat(
             yield _sse("error", {"message": _client_safe_error(exc), "partial": pipeline_ctx.response or response})
             yield _sse("done", {"interrupted": True, "status": _payload(api_user)})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    async def _stream_with_done_guard():
+        # BUGFIX(工具调用后一直转圈):保证任何退出路径(early_return 未发 done / 中途异常 /
+        # schema-echo 截停)结束时前端都能收到一个 done。否则 Composer 的 streaming 旗标永不清,
+        # 圆环/思考流也因 applyState 不跑而出不来。done 走 _sse 前缀 "event: done\n" 可靠识别。
+        _done_seen = False
+        try:
+            async for _chunk in stream():
+                if isinstance(_chunk, str) and _chunk.startswith("event: done\n"):
+                    _done_seen = True
+                yield _chunk
+        finally:
+            if not _done_seen:
+                try:
+                    yield _sse("done", {"status": _payload(api_user), "interrupted": True})
+                except Exception:
+                    yield _sse("done", {"interrupted": True})
+
+    return StreamingResponse(_stream_with_done_guard(), media_type="text/event-stream")
 
 
 @router.post("/api/stop", response_model=OkResponse, responses=COMMON_ERROR_RESPONSES)

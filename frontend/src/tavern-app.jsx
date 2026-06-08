@@ -778,7 +778,49 @@ export default function TavernApp() {
             // 后端可能在 status 里回带最新 history(含 persona/world 更新),不强制覆盖流式气泡
           }
         },
-        on_reasoning: () => { if (isCurrentRun()) resetIdle(); },
+        // 思考流(reasoning)实时累积到流式 assistant 气泡的 _thinking → NarrativeBlock 显示可折叠思考块。
+        on_reasoning: (data) => {
+          if (!isCurrentRun()) return;
+          resetIdle();
+          const piece = (data && (data.text || data.delta)) || '';
+          if (!piece) return;
+          setHistory((h) => {
+            let arr = h;
+            if (!openedAssistant) { openedAssistant = true; arr = [...h, { role: 'assistant', content: '', ts, streaming: true }]; }
+            const last = arr[arr.length - 1];
+            if (!last || last.role !== 'assistant') return arr;
+            return [...arr.slice(0, -1), { ...last, _thinking: (last._thinking || '') + piece }];
+          });
+        },
+        // 工具调用实时累积到 _toolOps → ToolCallBlock 折叠组(默认折叠,展开看 args/result)。
+        on_tool_call: (data) => {
+          if (!isCurrentRun()) return;
+          resetIdle();
+          const op = { tool: (data && data.tool) || '?', args: (data && (data.args_summary || data.args)) || null, _pending: true };
+          setHistory((h) => {
+            let arr = h;
+            if (!openedAssistant) { openedAssistant = true; arr = [...h, { role: 'assistant', content: '', ts, streaming: true }]; }
+            const last = arr[arr.length - 1];
+            if (!last || last.role !== 'assistant') return arr;
+            return [...arr.slice(0, -1), { ...last, _toolOps: [...(last._toolOps || []), op] }];
+          });
+        },
+        on_tool_result: (data) => {
+          if (!isCurrentRun()) return;
+          resetIdle();
+          setHistory((h) => {
+            const last = h[h.length - 1];
+            if (!last || last.role !== 'assistant' || !Array.isArray(last._toolOps) || !last._toolOps.length) return h;
+            const ops = [...last._toolOps];
+            for (let i = ops.length - 1; i >= 0; i--) {
+              if (ops[i]._pending) {
+                ops[i] = { ...ops[i], ok: !!(data && data.ok), result: (data && data.result_snippet) || null, error: (data && data.error) || null, _pending: false };
+                break;
+              }
+            }
+            return [...h.slice(0, -1), { ...last, _toolOps: ops }];
+          });
+        },
         on_token: (data) => {
           if (!isCurrentRun()) return;
           resetIdle();
