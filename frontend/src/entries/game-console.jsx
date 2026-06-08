@@ -23,7 +23,10 @@ import { installWarmTheme } from '../cloudscape-theme.js';
 installWarmTheme();
 
 // 组件模块 — named import
-import { useResizable } from '../responsive.jsx';
+import { useResizable, useBreakpoint } from '../responsive.jsx';
+// 移动原生游戏台(P2)— <600px 且开启 m2 标志时替代电脑端 gc-shell。
+import '../mobile.css';
+import { MobileGame } from '../mobile/game/MobileGame.jsx';
 import { safeUUID } from '../lib/crypto-safe.js';
 import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack, RunSteps, GameSettingsModal } from '../game-app.jsx';
 import { Composer, ConfirmStrip } from '../game-composer.jsx';
@@ -243,6 +246,16 @@ const TWEAK_DEFAULTS = {
   showRail: true,
 };
 
+// 移动游戏台灰度开关:迁移期默认关闭(零影响真机用户),开发用 ?m2=1 或 localStorage。P8 改默认开。
+const MOBILE_GAME_ENABLED = (() => {
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('m2') === '1') { try { localStorage.setItem('rpg_mobile_v2', '1'); } catch (_) {} return true; }
+    if (q.get('m2') === '0') { try { localStorage.removeItem('rpg_mobile_v2'); } catch (_) {} return false; }
+    return localStorage.getItem('rpg_mobile_v2') === '1';
+  } catch (_) { return false; }
+})();
+
 const PUBLIC_STAGES = {
   context: { id: 'context', label: '准备上下文', order: 1 },
   rules:   { id: 'rules',   label: '准备上下文', order: 2 },
@@ -283,6 +296,10 @@ function App() {
   // 这里仅消费默认值,改成普通常量即可。
   const t = TWEAK_DEFAULTS;
   const openTweaks = () => window.postMessage({ type: '__activate_edit_mode' }, '*');
+
+  // P2 移动游戏台:窄屏 + 灰度开关 → 渲染移动原生 UI(复用同一 run-loop,见下方早返)
+  const { width: _vpWidth } = useBreakpoint();
+  const mobileGame = MOBILE_GAME_ENABLED && _vpWidth > 0 && _vpWidth < 600;
 
   // A2: 多 tab 冲突检测 — BroadcastChannel
   // 同一 origin 内不同 tab 打开同一 save_id 时，后进者收到 banner 警告。
@@ -1376,6 +1393,70 @@ function App() {
     const fallback = setTimeout(() => setMountStage((s) => Math.min(2, s + 1)), 200);
     return () => { cancelAnimationFrame(raf); clearTimeout(fallback); };
   }, [mountStage]);
+
+  // ── P2 移动原生游戏台:窄屏早返。UI 全按设计稿重写(MobileGame),逻辑/数据复用本 App
+  //    的全部 state + handler;设计稿砍掉的功能(历史/搜索/游戏内设置/反馈/SSE 调试)用
+  //    既有 overlay 找回(它们是模态浮层,非主 UI 本体)。
+  if (mobileGame && mountStage >= 1) {
+    return (
+      <>
+        <MobileGame
+          game={game} history={
+            (stateLoadedNoPlayer && history.length === 0)
+              ? [{ role: 'assistant', content: '等待开场…', _opening: true, _thinking: 'starting' }] : history
+          }
+          runState={runState} text={text} setText={setText}
+          onSend={onSend} onSendRaw={onSendRaw} onStop={onStop}
+          attachments={attachments} setAttachments={setAttachments}
+          model={model} setModel={setModel}
+          permission={permission} setPermission={setPermission}
+          pendingWrites={pendingWrites} pendingQuestions={pendingQuestions}
+          onApprove={onApprove} onReject={onReject} onAnswerQuestion={onAnswerQuestion} onDismissConfirm={onDismissConfirm}
+          onSlashPick={onSlashPick} onAttachPick={onAttachPick} pickedCommand={pickedCommand} onClearCommand={() => setPickedCommand(null)}
+          onRetry={onRetry} onRegenerate={onRegenerate} onShowSse={onShowSse}
+          clicheNotice={clicheNotice} onRetryCliche={() => { setClicheNotice(null); onRetry(); }} onDismissCliche={() => setClicheNotice(null)}
+          hasError={hasError}
+          activeSave={activeSave} realSaves={realSaves.length ? realSaves : ((window.RPG_AUTH && window.RPG_AUTH.authed) ? [] : (window.MOCK_PLATFORM?.saves || []))}
+          onSwitchSave={async (sid) => { try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); reloadState(); } catch (e) { window.__apiToast?.('切换失败', { kind: 'danger', detail: e?.message }); } }}
+          onNew={() => { if (!confirm('新建存档需要选择剧本与角色,将跳到平台『存档目录』走正规创建流。\n\n确认跳转?')) return; location.href = '/saves'; }}
+          onSave={async () => { try { await window.api.game.saveGame(); window.__apiToast?.('已保存', { kind: 'ok' }); } catch (e) { window.__apiToast?.('保存失败', { kind: 'danger', detail: e?.message }); } }}
+          onMemoryMode={async (mode) => { setGame((g) => ({ ...g, memory: { ...(g.memory || {}), mode } })); try { await window.api.game.memoryMode(mode); } catch (_) {} }}
+          reloadState={reloadState}
+          activeTab={activeTab} setActiveTab={setActiveTab}
+          lastUsage={lastUsage}
+          tabConflictBanner={tabConflictBanner} setTabConflictBanner={setTabConflictBanner}
+          onExit={() => { try { location.href = new URL('Platform.html', location.href).href; } catch (_) { location.href = 'Platform.html'; } }}
+          onOpenHistory={() => setShowHistoryDrawer(true)}
+          onOpenSearch={() => setShowSearchDrawer(true)}
+          onOpenSettings={() => setShowInGameSettings(true)}
+          onOpenFeedback={() => { try { window.__openFeedback?.(); } catch (_) {} }}
+        />
+        {/* 找回的模态浮层(非主 UI 本体) */}
+        <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)} saveTitle={activeSave?.title || game?._raw?.save_title || ''} permission={permission} />
+        <HistoryDrawer open={showHistoryDrawer} history={history} onClose={() => setShowHistoryDrawer(false)} />
+        <SearchDrawer open={showSearchDrawer} history={history} state={game} onClose={() => setShowSearchDrawer(false)} />
+        <GCWelcomeModal open={welcomeGCOpen} onClose={() => setWelcomeGCOpen(false)} />
+        {splashNeeded && <AdultSplash splashVersion={SPLASH_VERSION} onAcked={() => setSplashNeeded(false)} />}
+        {sseLogOpen && (
+          <div className="gc-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'flex-end' }} onClick={() => setSseLogOpen(false)}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxHeight: '80vh', background: 'var(--panel,#211f1d)', color: 'var(--text)', borderRadius: '14px 14px 0 0', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--line-soft)' }}>
+                <strong>本轮 SSE 事件（{sseLog.length}）</strong>
+                <button className="btn ghost" onClick={() => setSseLogOpen(false)}>关闭</button>
+              </div>
+              <div style={{ overflow: 'auto', padding: '8px 14px', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.5 }}>
+                {sseLog.length === 0 ? <div style={{ padding: '20px 0', color: 'var(--muted)' }}>暂无本轮事件。</div> : sseLog.map((ev, i) => (
+                  <div key={i} style={{ padding: '3px 0', borderBottom: '1px dashed var(--line-soft)' }}>
+                    <span style={{ color: 'var(--accent)' }}>{ev.kind}</span> <span style={{ wordBreak: 'break-all' }}>{JSON.stringify(ev.payload)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="gc-shell" style={{ ...rootStyle, '--gc-rail-w': gcRailW + 'px' }}>

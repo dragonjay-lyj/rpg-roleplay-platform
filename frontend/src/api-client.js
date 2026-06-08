@@ -44,7 +44,10 @@
 
   // One-shot guard: prevent redirect loop when a 401 fires on a page
   // that is itself mid-flight (e.g. Login.html calling /api/auth/me).
-  let _AUTH_REDIRECT_ARMED = true;
+  // 设计预览 / 离线模式(?offline):401 不跳登录页,让 mock UI 正常渲染。
+  let _AUTH_REDIRECT_ARMED = (() => {
+    try { return !new URLSearchParams(location.search).has("offline"); } catch (_) { return true; }
+  })();
 
   // ---- core fetch helpers ------------------------------------
   function timeoutSignal(ms) {

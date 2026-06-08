@@ -38,6 +38,11 @@ import { FeedbackPage } from '../pages/feedback.jsx';
 import { DeviceAuthorizePage } from '../pages/device.jsx';
 import { plPathToPage, plNavigate, plPageToPath } from '../router.js';
 
+// 移动端专用外壳(路线 A)— <600px 且开启 m2 标志时替代 Cloudscape 外壳。
+import '../mobile.css';
+import { MobileRoot } from '../mobile/MobileRoot.jsx';
+import { useBreakpoint } from '../responsive.jsx';
+
 // AGE-02: splash gate
 import AdultSplash from '../components/AdultSplash.jsx';
 import { ErrorBoundary } from '../components/ErrorBoundary.jsx';
@@ -63,6 +68,18 @@ const TWEAK_DEFAULTS = {
   sidebarWidth: 244,
   accent: 'terracotta',
 };
+
+// 移动外壳灰度开关:迁移期默认关闭(零影响真机用户),开发用 ?m2=1 或 localStorage。
+// P8 收尾时改为 width<600 默认开。
+const MOBILE_V2_ENABLED = (() => {
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('m2') === '1') { try { localStorage.setItem('rpg_mobile_v2', '1'); } catch (_) {} return true; }
+    if (q.get('m2') === '0') { try { localStorage.removeItem('rpg_mobile_v2'); } catch (_) {} return false; }
+    return localStorage.getItem('rpg_mobile_v2') === '1';
+  } catch (_) { return false; }
+})();
+const MOBILE_V2_MAX_WIDTH = 600;
 
 // 合法 page id 全集(History 路由 /<id> 校验用)。settings-deploy 等旧别名在 router.js
 // PL_HASH_ALIASES 里归一。
@@ -136,6 +153,10 @@ function PlatformApp() {
 
   const go = (id) => plNavigate(id);
 
+  // 路线 A:窄屏 + 灰度开关 → 渲染移动专用外壳(底部 Tab + push/pop),复用同一数据层。
+  const { width } = useBreakpoint();
+  const mobileShell = MOBILE_V2_ENABLED && width > 0 && width < MOBILE_V2_MAX_WIDTH;
+
   let body = null;
   if (page === 'profile') body = <ProfilePage />;
   else if (page === 'me') body = <MePage subPage="overview" />;
@@ -191,12 +212,16 @@ function PlatformApp() {
 
   return (
     <>
-      <PlatformShellCS
-        page={page}
-        setPage={go}
-      >
-        {body}
-      </PlatformShellCS>
+      {mobileShell ? (
+        <MobileRoot page={page} setPage={go} />
+      ) : (
+        <PlatformShellCS
+          page={page}
+          setPage={go}
+        >
+          {body}
+        </PlatformShellCS>
+      )}
       {splashNeeded && (
         <AdultSplash
           splashVersion={SPLASH_VERSION}
