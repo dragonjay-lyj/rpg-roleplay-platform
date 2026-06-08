@@ -422,6 +422,7 @@
       preview: (body) => POST(`${API_PREFIX}/scripts/preview`, body, { signal: timeoutSignal(90000) }),
       importScript: (body) => POST(`${API_PREFIX}/scripts/import`, body, { signal: timeoutSignal(90000) }),
       delete: (sid, body = {}) => POST(`${API_PREFIX}/scripts/` + sid + "/delete", body),
+      unsubscribe: (sid) => POST(`${API_PREFIX}/scripts/` + sid + "/unsubscribe", {}),
       chapters: (sid, q) => GET(`${API_PREFIX}/scripts/` + sid + "/chapters", q),
       // 单章节完整 content(列表只回 180-char preview;点入章节后 lazy 拉真正文)
       chapterDetail: (sid, idx) => GET(`${API_PREFIX}/scripts/${sid}/chapters/${idx}`),

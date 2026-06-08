@@ -650,6 +650,20 @@ async def api_script_resplit(request: Request, script_id: int, user=Depends(requ
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
 
 
+@router.post("/api/scripts/{script_id}/unsubscribe")
+async def api_script_unsubscribe(script_id: int, user=Depends(require_user)):
+    """取消订阅来自公开库的剧本:只删 user_script_subscriptions 指针,不碰原剧本数据。"""
+    with connect() as db:
+        result = db.execute(
+            "DELETE FROM user_script_subscriptions WHERE user_id = %s AND script_id = %s",
+            (user["id"], script_id),
+        )
+        if result.rowcount == 0:
+            return json_response({"ok": False, "error": "未订阅该剧本"}, status_code=404)
+        db.commit()
+    return json_response({"ok": True, "unsubscribed": True, "script_id": script_id})
+
+
 @router.post("/api/scripts/{script_id}/delete")
 async def api_script_delete(request: Request, script_id: int, user=Depends(require_user)):
     """删除剧本。force=True 时连带删除其下所有存档。"""

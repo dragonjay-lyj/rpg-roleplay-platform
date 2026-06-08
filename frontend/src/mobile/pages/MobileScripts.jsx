@@ -784,6 +784,17 @@ function ScriptDetailView({ script, saves, embedStatus, currentUserId, onBack, o
     } catch (e) { window.__apiToast?.(e?.message || '删除失败', { kind: 'danger' }); }
   };
 
+  const onUnsubscribe = async () => {
+    if (!window.confirm(`将「${script.title}」从你的剧本列表移除？原剧本不受影响，之后可在公开库重新导入。`)) return;
+    try {
+      const r = await window.api.scripts.unsubscribe(script.id);
+      if (!r || r.ok !== true) throw new Error(r?.error || '移出失败');
+      window.__apiToast?.('已移出我的列表', { kind: 'ok' });
+      try { window.dispatchEvent(new CustomEvent('rpg-scripts-updated')); } catch (_) {}
+      onBack();
+    } catch (e) { window.__apiToast?.(e?.message || '移出失败', { kind: 'danger' }); }
+  };
+
   if (subView === 'chapters') return <ChaptersView script={script} onBack={() => setSubView(null)} />;
   if (subView === 'worldbook') return <WorldbookView script={script} onBack={() => setSubView(null)} />;
   if (subView === 'npc') return <NpcView script={script} onBack={() => setSubView(null)} />;
@@ -806,9 +817,15 @@ function ScriptDetailView({ script, saves, embedStatus, currentUserId, onBack, o
           <button className="pl-headbtn" onClick={() => setSubView('share')} title="发布/导出">
             <Icon name={script.is_public ? 'globe' : 'upload'} size={17} />
           </button>
-          <button className="pl-headbtn" onClick={onDelete} title="删除" style={{ color: 'var(--danger)' }}>
-            <Icon name="trash" size={17} />
-          </button>
+          {script.is_subscribed ? (
+            <button className="pl-headbtn" onClick={onUnsubscribe} title="移出我的列表" style={{ color: 'var(--danger)' }}>
+              <Icon name="trash" size={17} />
+            </button>
+          ) : (
+            <button className="pl-headbtn" onClick={onDelete} title="删除" style={{ color: 'var(--danger)' }}>
+              <Icon name="trash" size={17} />
+            </button>
+          )}
         </div>
       </div>
       <div className="pl-body tabbed">

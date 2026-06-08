@@ -495,7 +495,7 @@ function SharingModeSelector({ script, currentUserId, onChanged }) {
    世界书 / NPC 角色卡 / 时间线锚点按需懒加载。 */
 function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatus, currentUserId,
   pendingTab, onPendingTabConsumed,
-  onPlay, onContinueSave, onNewGame, onChapters, onReview, onExtractDone, onEmbed, onExport, onToggleVisibility, onDelete, onEditOverrides, onReload }) {
+  onPlay, onContinueSave, onNewGame, onChapters, onReview, onExtractDone, onEmbed, onExport, onToggleVisibility, onDelete, onUnsubscribe, onEditOverrides, onReload }) {
   const { t } = useTranslation();
   const [tab, setTab] = useStatePL('overview');
 
@@ -638,7 +638,9 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
                 { id: 'embed', text: es?.running ? t('scripts.my.embedding') : t('scripts.my.embed_start'), iconName: 'search', disabled: !!es?.running },
                 { id: 'export', text: t('scripts.my.action_export'), iconName: 'download' },
                 { id: 'visibility', text: s.is_public ? t('scripts.my.action_unpublish') : t('scripts.my.action_publish'), iconName: s.is_public ? 'lock-private' : 'share' },
-                { id: 'delete', text: t('scripts.my.action_delete'), iconName: 'remove' },
+                s.is_subscribed
+                  ? { id: 'unsubscribe', text: t('scripts.my.action_unsubscribe'), iconName: 'remove' }
+                  : { id: 'delete', text: t('scripts.my.action_delete'), iconName: 'remove' },
               ]}
               onItemClick={({ detail }) => {
                 const id = detail.id;
@@ -646,6 +648,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
                 else if (id === 'export') onExport(s);
                 else if (id === 'visibility') onToggleVisibility(s);
                 else if (id === 'delete') onDelete(s);
+                else if (id === 'unsubscribe') onUnsubscribe && onUnsubscribe(s);
               }}>{t('scripts.my.more')}</CSButtonDropdown>
           </CSSpaceBetween>
         }
@@ -1174,6 +1177,23 @@ function ScriptsListView() {
     }
   };
 
+  const onUnsubscribe = async (s) => {
+    if (!await window.__confirm({ title: t('scripts.confirm.unsubscribe_title'), message: t('scripts.confirm.unsubscribe_msg', { title: s.title }), danger: false, confirmText: t('scripts.confirm.unsubscribe_btn') })) return;
+    setBusyId(s.id);
+    try {
+      const result = await window.api.scripts.unsubscribe(s.id);
+      if (!result || result.ok !== true) {
+        throw new Error(result?.error || result?.detail || t('scripts.toast.unsubscribe_fail'));
+      }
+      window.__apiToast?.(t('scripts.toast.unsubscribed'), { kind: "ok" });
+      reload();
+    } catch (e) {
+      window.__apiToast?.(t('scripts.toast.unsubscribe_fail'), { kind: "danger", detail: e?.message });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const onImportPackFile = async (file) => {
     if (!file) return;
     setImportPackBusy(true);
@@ -1233,7 +1253,9 @@ function ScriptsListView() {
       { id: 'embed', text: embedText, iconName: fullyDone ? 'status-positive' : 'gen-ai', disabled: !!running },
       { id: 'visibility', text: s.is_public ? t('scripts.my.action_unpublish') : t('scripts.my.action_publish'), iconName: s.is_public ? 'lock-private' : 'share' },
       { id: 'export', text: t('scripts.my.action_export'), iconName: 'download', disabled: exportingId === s.id },
-      { id: 'delete', text: t('scripts.my.action_delete'), iconName: 'remove', disabled: busyId === s.id },
+      s.is_subscribed
+        ? { id: 'unsubscribe', text: t('scripts.my.action_unsubscribe'), iconName: 'remove', disabled: busyId === s.id }
+        : { id: 'delete', text: t('scripts.my.action_delete'), iconName: 'remove', disabled: busyId === s.id },
     ];
   };
   const onRowAction = (s, id) => {
@@ -1244,6 +1266,7 @@ function ScriptsListView() {
     else if (id === 'export') onExportPack(s);
     else if (id === 'visibility') onToggleVisibility(s);
     else if (id === 'delete') onDelete(s);
+    else if (id === 'unsubscribe') onUnsubscribe(s);
   };
   const onToggleVisibility = async (s) => {
     const next = !s.is_public;
@@ -1346,6 +1369,7 @@ function ScriptsListView() {
         onExport={onExportPack}
         onToggleVisibility={onToggleVisibility}
         onDelete={onDelete}
+        onUnsubscribe={onUnsubscribe}
         onEditOverrides={setOverridesScript}
         onReload={(newId) => { reload(); if (newId) setSelectedId(newId); }}
       />
