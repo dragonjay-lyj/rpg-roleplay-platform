@@ -64,7 +64,9 @@ def _t_list_pending_anchors(user_id: int, args: dict) -> str:
     try:
         from platform_app.db import connect, init_db
         init_db()
-        with connect() as db:
+        # SEC(M-5): 整快照 read-modify-write 在 (user,save) 级锁内,防与并发 save 级写者互覆盖。
+        from tools_dsl.command_dispatcher import _get_sync_scope_lock
+        with _get_sync_scope_lock((int(user_id), save_id)), connect() as db:
             if not _own_save(db, save_id, user_id):
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
         from agents.anchor_seed_agent import list_pending_for_phase, summarize_save_anchor_state
@@ -133,7 +135,9 @@ def _t_mark_anchor_satisfied(user_id: int, args: dict) -> str:
     try:
         from platform_app.db import connect, init_db
         init_db()
-        with connect() as db:
+        # SEC(M-5): 整快照 read-modify-write 在 (user,save) 级锁内,防与并发 save 级写者互覆盖。
+        from tools_dsl.command_dispatcher import _get_sync_scope_lock
+        with _get_sync_scope_lock((int(user_id), save_id)), connect() as db:
             if not _own_save(db, save_id, user_id):
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
             # 默认 occurred_turn 从 branch_commits 最大值取
@@ -224,7 +228,9 @@ def _t_mark_anchor_superseded(user_id: int, args: dict) -> str:
     try:
         from platform_app.db import connect, init_db
         init_db()
-        with connect() as db:
+        # SEC(M-5): 整快照 read-modify-write 在 (user,save) 级锁内,防与并发 save 级写者互覆盖。
+        from tools_dsl.command_dispatcher import _get_sync_scope_lock
+        with _get_sync_scope_lock((int(user_id), save_id)), connect() as db:
             if not _own_save(db, save_id, user_id):
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
             if anchor_key:
@@ -431,7 +437,9 @@ def _t_summarize_anchors(user_id: int, args: dict) -> str:
     try:
         from platform_app.db import connect, init_db
         init_db()
-        with connect() as db:
+        # SEC(M-5): 整快照 read-modify-write 在 (user,save) 级锁内,防与并发 save 级写者互覆盖。
+        from tools_dsl.command_dispatcher import _get_sync_scope_lock
+        with _get_sync_scope_lock((int(user_id), save_id)), connect() as db:
             if not _own_save(db, save_id, user_id):
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
         from agents.anchor_seed_agent import summarize_save_anchor_state
@@ -478,7 +486,9 @@ def _t_claim_protagonist_pov(user_id: int, args: dict) -> str:
         from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
         init_db()
-        with connect() as db:
+        # SEC(M-5): 整快照 read-modify-write 在 (user,save) 级锁内,防与并发 save 级写者互覆盖。
+        from tools_dsl.command_dispatcher import _get_sync_scope_lock
+        with _get_sync_scope_lock((int(user_id), save_id)), connect() as db:
             if not _own_save(db, save_id, user_id):
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
             # 1. 拿 script_id
@@ -573,7 +583,9 @@ def _t_revoke_protagonist_pov(user_id: int, args: dict) -> str:
         from platform_app.db import connect, init_db
         from psycopg.types.json import Jsonb
         init_db()
-        with connect() as db:
+        # SEC(M-5): 整快照 read-modify-write 在 (user,save) 级锁内,防与并发 save 级写者互覆盖。
+        from tools_dsl.command_dispatcher import _get_sync_scope_lock
+        with _get_sync_scope_lock((int(user_id), save_id)), connect() as db:
             if not _own_save(db, save_id, user_id):
                 return f"失败 (权限): save {save_id} 不属于当前用户或不存在"
             # 1. 把 claim 标记过的 anchor 重置 pending。

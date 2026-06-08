@@ -331,6 +331,10 @@ async def api_set_preference(request: Request, user=Depends(require_user)):
     payload = body.get("preferences") if "preferences" in body else body.get("value", body)
     if not isinstance(payload, dict):
         return json_response({"ok": False, "error": "preferences 必须是对象"}, status_code=400)
+    # SEC(H-13): payload 字节上限,防认证用户反复 POST 大 JSON 做存储放大 DoS(JSONB || 合并无界增长)。
+    import json as _json
+    if len(_json.dumps(payload, ensure_ascii=False).encode("utf-8")) > 32 * 1024:
+        return json_response({"ok": False, "error": "preferences 过大(上限 32KB)"}, status_code=400)
     with connect() as db:
         if replace:
             row = db.execute(

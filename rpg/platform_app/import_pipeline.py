@@ -323,6 +323,18 @@ def get_job_status(user_id: int, job_id: str | None = None, script_id: int | Non
         if not row:
             return {"ok": True, "found": False}
         job = expose(row) or {}
+        # SEC(M-11): 不把 Python 堆栈回传用户(泄露绝对路径/模块/库版本)。只留首行友好摘要,
+        # 完整 traceback 仍在 server log。错误是写库时拼成 "msg\n<traceback>",截到首行即可。
+        def _strip_trace(v):
+            if isinstance(v, str):
+                return v.split("\n", 1)[0][:300]
+            if isinstance(v, list):
+                return [_strip_trace(x) for x in v]
+            return v
+        if job.get("error"):
+            job["error"] = _strip_trace(job["error"])
+        if job.get("warnings"):
+            job["warnings"] = _strip_trace(job["warnings"])
         status = (job.get("status") or "").strip()
         if status == "queued":
             # 计算排队位次：本 job 之前还有多少个 queued/pending/running 的导入任务

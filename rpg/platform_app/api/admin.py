@@ -1162,6 +1162,7 @@ async def admin_terminate_user(
         _write_audit(db, admin, "aup.terminate",
                      target_type="user", target_id=str(user_id),
                      details={"reason": reason}, ip=ip)
+    return json_response({"ok": True})  # SEC(L-6): 显式返回,避免 200 空 body 致前端误判/重试
 
 
 # ──────────────────────────────────────────────────────────────────────────────
