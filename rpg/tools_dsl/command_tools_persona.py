@@ -16,7 +16,14 @@ from typing import Any
 
 from tools_dsl.command_dispatcher import ToolSpec, get_registry
 
-_USER_MUTATE = frozenset({"ui_button", "api_direct", "console_assistant"})
+# 角色卡/persona「创建·克隆」类(非破坏)tool 的 origin。
+# 历史(task 87)排除 llm_chat,把这些工具圈在侧栏控制台助手里;但用户已退役控制台助手,
+# 酒馆/游戏聊天 agent 即唯一 agent 面,需要完整接口权限 → 放开 llm_chat(与
+# set_tavern_character / worldbook_add 同模式:llm_chat ∈ origins + destructive=False)。
+# 注意:dispatcher 不按 permission mode 拦 tool 调用(只拦 GM 的 JSON-op 字段写),故与现有
+# llm_chat 写工具行为一致;**破坏性删除仍走 _USER_DEST**(destructive=True 被 dispatcher
+# 硬拦 llm_chat,只能 UI 确认,防剧情 agent 误删用户卡)。
+_USER_MUTATE = frozenset({"ui_button", "api_direct", "console_assistant", "llm_chat"})
 _USER_DEST = frozenset({"ui_button", "api_direct", "console_assistant"})
 _CREATIVE_ORIGINS = frozenset({"console_assistant", "api_direct"})
 
@@ -177,7 +184,7 @@ def register_persona_tools() -> None:
               "tags": {"type": "array", "items": {"type": "string"}},
           },
           "required": []},  # handler 自行校验并返回"name 为空"友好消息
-         _t_create_persona, _USER_MUTATE, False),  # 跨 save 持久资源,LLM 禁
+         _t_create_persona, _USER_MUTATE, False),  # 跨 save 持久资源;控制台助手退役后放开酒馆/游戏 agent
         ("delete_persona", "永久删除 persona",
          {"type": "object", "properties": {"persona_id": {"type": "integer"}}, "required": ["persona_id"]},
          _t_delete_persona, _USER_DEST, True),
@@ -199,7 +206,7 @@ def register_persona_tools() -> None:
           },
           # handler 自行校验 name 为空,返回"name 为空"友好消息
           "required": []},
-         _t_create_character_card, _USER_MUTATE, False),  # 跨 save,LLM 禁
+         _t_create_character_card, _USER_MUTATE, False),  # 跨 save;控制台助手退役后放开酒馆/游戏 agent
         ("delete_character_card", "永久删除角色卡",
          {"type": "object", "properties": {"card_id": {"type": "integer"}}, "required": ["card_id"]},
          _t_delete_character_card, _USER_DEST, True),
@@ -213,7 +220,7 @@ def register_persona_tools() -> None:
               "card_id": {"type": "integer", "description": "NPC 角色卡 id(来自 list_script_npcs)"},
           },
           "required": ["script_id", "card_id"]},
-         _t_clone_npc_to_user_card, _USER_MUTATE, False),  # 跨 save 持久资源,与 create_character_card 同策略:console_assistant 可,自由叙事 llm_chat 禁
+         _t_clone_npc_to_user_card, _USER_MUTATE, False),  # 与 create_character_card 同策略;控制台助手退役后放开酒馆/游戏 agent
     ]
     for name, desc, schema, exec_, origins, destructive in user_specs:
         if not registry.has(name):

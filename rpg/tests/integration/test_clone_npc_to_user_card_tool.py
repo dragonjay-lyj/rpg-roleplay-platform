@@ -111,7 +111,7 @@ class TestCloneNpcToUserCardTool(unittest.TestCase):
         self.assertIn("card_id 必填", _t_clone_npc_to_user_card(self.owner, {"script_id": self.sid}))
 
     def test_origin_policy(self):
-        """与 create_character_card 同策略:console_assistant 可见,自由叙事 llm_chat 不可见。"""
+        """控制台助手退役后放开酒馆/游戏 agent:console_assistant 与 llm_chat 都可见。"""
         from tools_dsl.command_tools_register import ensure_registered
         from tools_dsl.command_dispatcher import get_registry
         ensure_registered()
@@ -122,7 +122,12 @@ class TestCloneNpcToUserCardTool(unittest.TestCase):
             return {t["name"] if isinstance(t, dict) else t.name for t in reg.list_for_origin(origin)}
 
         self.assertIn("clone_npc_to_user_card", _names("console_assistant"))
-        self.assertNotIn("clone_npc_to_user_card", _names("llm_chat"))
+        self.assertIn("clone_npc_to_user_card", _names("llm_chat"))
+        # create_character_card / create_persona 同步放开
+        self.assertIn("create_character_card", _names("llm_chat"))
+        self.assertIn("create_persona", _names("llm_chat"))
+        # 破坏性删除仍不给 llm_chat(走 UI 二次确认)
+        self.assertNotIn("delete_character_card", _names("llm_chat"))
 
 
 if __name__ == "__main__":
