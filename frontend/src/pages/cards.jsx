@@ -474,13 +474,18 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
     const raw = c._raw || c;
     const body = {
       name: c.name || raw.name || t('cards.detail.unnamed'),
+      full_name: raw.full_name || "",
+      aliases: Array.isArray(raw.aliases) ? raw.aliases : [],
       identity: c.role || raw.identity || raw.role || "—",
+      background: raw.background || "",
       appearance: raw.appearance || c.bio || "",
       personality: raw.personality || "",
       speech_style: raw.speech_style || "",
       current_status: raw.current_status || "",
       secrets: raw.secrets || "",
       sample_dialogue: Array.isArray(raw.sample_dialogue) ? raw.sample_dialogue : [],
+      // 复制头像 URL(站内资产,物理不重存,白名单放行);转换=完整复制一份独立用户卡,非指针
+      avatar_path: raw.avatar_path || "",
       tags: Array.isArray(c.tags) && c.tags.length ? [...c.tags, t('cards.list.tag_from_npc')] : [t('cards.list.tag_from_npc')],
       metadata: {
         source: "npc_promote",
@@ -798,6 +803,12 @@ function PersonaImageGallery({ cardId, onAvatarRefresh }) {
 
   // 挂载时自动加载
   useEffectPL(() => { load(); }, [load]);
+  // 生图完成(SSE rpg-image-updated,kind=persona)→ 自动刷新缩略图,无需手动刷新
+  useEffectPL(() => {
+    const h = (ev) => { const d = (ev && ev.detail) || {}; if (d.op === 'ready' && (d.payload?.kind || '') === 'persona') load(); };
+    window.addEventListener('rpg-image-updated', h);
+    return () => window.removeEventListener('rpg-image-updated', h);
+  }, [load]);
 
   const doSetCurrent = async (img) => {
     if (img.is_current || setting) return;
@@ -908,6 +919,12 @@ function PersonaThumbStrip({ cardId, onAvatarRefresh }) {
     } catch (_) { setImages([]); }
   }, [cardId]);
   useEffectPL(() => { load(); }, [load]);
+  // 生图完成(SSE rpg-image-updated,kind=persona)→ 自动刷新缩略图,无需手动刷新
+  useEffectPL(() => {
+    const h = (ev) => { const d = (ev && ev.detail) || {}; if (d.op === 'ready' && (d.payload?.kind || '') === 'persona') load(); };
+    window.addEventListener('rpg-image-updated', h);
+    return () => window.removeEventListener('rpg-image-updated', h);
+  }, [load]);
 
   const setCurrent = async (img) => {
     if (img.is_current) return;
@@ -920,7 +937,8 @@ function PersonaThumbStrip({ cardId, onAvatarRefresh }) {
   };
 
   const onCrop = async (blob) => {
-    const r = await window.api.cards.uploadPersonaImage(cardId, new File([blob], 'crop.png', { type: 'image/png' }));
+    const ext = (blob.type && blob.type.split('/')[1]) || 'jpg';
+    const r = await window.api.cards.uploadPersonaImage(cardId, new File([blob], 'crop.' + ext, { type: blob.type || 'image/jpeg' }));
     const url = r && (r.url || r.image_url);
     await load();
     if (url && onAvatarRefresh) onAvatarRefresh(url);

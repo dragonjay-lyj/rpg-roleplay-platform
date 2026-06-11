@@ -88,6 +88,45 @@ def _normalize_list(value: Any) -> list[Any]:
     return [value]
 
 
+def build_persona_prompt(card: dict[str, Any]) -> str:
+    """从角色卡【全字段】拼一个尽量完整的人设图生成提示词(中文逗号分隔,过滤空字段)。
+
+    用户诉求:人设图提示词要包含角色卡的所有信息。这里覆盖 name/full_name/aliases/
+    identity/appearance/personality/background/speech_style/current_status/secrets/tags
+    (appearance/identity 等视觉相关字段靠前;sample_dialogue=对白,与画面无关,略)。
+    工具调用路径由 LLM 自行决定拼哪些字段,不走此函数。
+    """
+    if not isinstance(card, dict):
+        return "character"
+
+    def _s(k: str) -> str:
+        v = card.get(k)
+        return str(v).strip() if v not in (None, "") else ""
+
+    parts: list[str] = []
+    name = _s("name") or _s("full_name")
+    if name:
+        parts.append(name)
+    if _s("identity"):
+        parts.append(_s("identity"))
+    if _s("appearance"):
+        parts.append(_s("appearance"))
+    for k in ("personality", "background", "speech_style", "current_status", "secrets"):
+        if _s(k):
+            parts.append(_s(k))
+    aliases = card.get("aliases")
+    if isinstance(aliases, (list, tuple)) and aliases:
+        parts.append("，".join(str(a) for a in aliases if a))
+    tags = card.get("tags")
+    if isinstance(tags, (list, tuple)) and tags:
+        parts.append("，".join(str(t) for t in tags if t))
+    elif isinstance(tags, str) and tags.strip():
+        parts.append(tags.strip())
+
+    prompt = "，".join(p for p in parts if p)
+    return prompt or name or "character"
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  USER PERSONAS（玩家身份卡，card_type='persona'）
 # ══════════════════════════════════════════════════════════════════════
@@ -269,13 +308,8 @@ def _maybe_enqueue_persona_image(
                 )
 
         if old_hash != new_hash and auto_sync:
-            # 用人设字段拼出生图提示串
-            name = str(row.get("name") or "")
-            identity = str(row.get("identity") or "")
-            appearance = str(row.get("appearance") or "")
-            personality = str(row.get("personality") or "")
-            parts = [p for p in [name, identity, appearance, personality] if p]
-            prompt = "，".join(parts) if parts else name or "character"
+            # 用角色卡【全字段】拼生图提示串(不再只 4 字段)
+            prompt = build_persona_prompt(dict(row) if isinstance(row, dict) else {"name": str(row.get("name") or "")})
             try:
                 from platform_app.image_jobs import enqueue_image_generation
                 enqueue_image_generation(
@@ -587,4 +621,18 @@ def clone_public_card(user_id: int, card_id: int) -> dict[str, Any]:
         if not new:
             raise ValueError("你已导入过这张角色卡")
         db.execute("update character_cards set clone_count = clone_count + 1 where id = %s", (int(card_id),))
+        # 复制人设图历史行 —— image_url 引用同一站内资产(物理文件不重存,满足「公开卡人设图/历史不存两次」)
+        try:
+            db.execute(
+                """
+                insert into card_persona_images
+                    (card_id, image_url, persona_hash, card_row_version, source, status, is_current, prompt_snapshot)
+                select %(newid)s, image_url, persona_hash, card_row_version, 'cloned', status, is_current, prompt_snapshot
+                  from card_persona_images
+                 where card_id = %(src)s
+                """,
+                {"newid": int(new["id"]), "src": int(card_id)},
+            )
+        except Exception as _persona_clone_exc:
+            log.warning("[user_cards] clone persona images failed new=%s src=%s: %s", new["id"], card_id, _persona_clone_exc)
     return {"ok": True, "card_id": int(new["id"])}

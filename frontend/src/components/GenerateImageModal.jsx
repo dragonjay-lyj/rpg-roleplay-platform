@@ -8,6 +8,7 @@ import CSTextarea from '@cloudscape-design/components/textarea';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import AgentModelPicker from './AgentModelPicker.jsx';
+import ImageSizePicker from './ImageSizePicker.jsx';
 
 /* GenerateImageModal — AI 生图弹窗，复用 CSModal + AgentModelPicker 范式。
 
@@ -37,6 +38,7 @@ export default function GenerateImageModal({
   const { useState, useEffect, useRef } = React;
 
   const [prompt, setPrompt] = useState(defaultPrompt);
+  const [size, setSize] = useState('');
   const [selModel, setSelModel] = useState({ api_id: '', model: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -125,6 +127,7 @@ export default function GenerateImageModal({
       };
       if (attach) body.attach = attach;
       if (saveId != null) body.save_id = saveId;
+      if (size) body.size = size;
       const res = await window.api.images.generate(body);
       if (!res || !res.image_id) {
         setBusy(false);
@@ -219,6 +222,9 @@ export default function GenerateImageModal({
           configHash="settings-models"
           onChange={(api_id, model) => setSelModel({ api_id, model })}
         />
+        <CSFormField label="尺寸 / 比例" description="按用途推荐默认比例；改一次后本地记住。vertex(Gemini) 暂不支持自定义尺寸">
+          <ImageSizePicker kind={kind} value={size} onChange={setSize} />
+        </CSFormField>
       </CSSpaceBetween>
     </CSModal>
   );

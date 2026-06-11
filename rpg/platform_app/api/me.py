@@ -726,18 +726,22 @@ async def api_generate_persona_image(request: Request, card_id: int, user=Depend
     from .. import image_jobs
     from ..db import connect as _connect
 
-    # S3: 入队前校验 card 归属（card_type in pc/persona，不存在→404）
+    # S3: 入队前校验 card 归属（card_type in pc/persona，不存在→404）— 取全行供兜底构建提示词
     with _connect() as db:
-        owned = db.execute(
-            "select 1 from character_cards where id = %s and user_id = %s"
+        card_row = db.execute(
+            "select * from character_cards where id = %s and user_id = %s"
             " and card_type in ('pc', 'persona')",
             (card_id, user["id"]),
         ).fetchone()
-    if not owned:
+    if not card_row:
         raise _HTTPException(status_code=404, detail="角色卡不存在或无权访问")
 
     body = await request.json()
     prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        # 前端没传(「立即生成」按钮)→ 后端按角色卡【全字段】兜底构建完整提示词,不再发空串
+        from ..user_cards import build_persona_prompt
+        prompt = build_persona_prompt(dict(card_row))
     result = image_jobs.enqueue_image_generation(
         user["id"],
         prompt,

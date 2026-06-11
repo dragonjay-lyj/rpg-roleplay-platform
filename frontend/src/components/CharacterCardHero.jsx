@@ -116,7 +116,8 @@ export default function CharacterCardHero({ card, editable = true, onChanged, sc
         open={light && !!url} src={url} alt={name}
         onClose={() => setLight(false)}
         onCrop={editable ? (async (blob) => {
-          await uploadFile(new File([blob], 'crop.png', { type: 'image/png' }));
+          const ext = (blob.type && blob.type.split('/')[1]) || 'jpg';
+          await uploadFile(new File([blob], 'crop.' + ext, { type: blob.type || 'image/jpeg' }));
         }) : undefined}
         cropHint="拖动调整裁剪区域，应用后将更新该角色形象" />
       {/* lightbox 由 ImageLightbox(portal 到 body)接管,根治 sticky 列困住 fixed 的 z-index bug */}

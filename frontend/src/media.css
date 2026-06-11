@@ -312,3 +312,14 @@
   font-size: 9px; padding: 2px 0; cursor: pointer; opacity: 0; transition: opacity .15s;
 }
 .pstrip__cell:hover .pstrip__set { opacity: 1; }
+
+/* ── 生图尺寸/比例选择器 ──────────────────────────────────── */
+.isz { display: flex; flex-wrap: wrap; gap: 6px; }
+.isz__btn {
+  height: 30px; padding: 0 12px; border-radius: 99px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line);
+  color: var(--text-quiet); font-size: 12px; font-weight: 500;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.isz__btn:hover { border-color: var(--accent-edge); color: var(--text); }
+.isz__btn.is-active { background: var(--accent); border-color: transparent; color: #fff; }

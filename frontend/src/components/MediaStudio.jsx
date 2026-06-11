@@ -2,6 +2,7 @@ import React from 'react';
 import CSModal from '@cloudscape-design/components/modal';
 import AgentModelPicker from './AgentModelPicker.jsx';
 import MediaUploadZone from './MediaUploadZone.jsx';
+import ImageSizePicker from './ImageSizePicker.jsx';
 
 /* MediaStudio — 统一图片来源：① AI 生成 ② 上传(拖拽/粘贴/点击) ③ 从图库选。
    一个优雅的流替代散落的"AI生成 / 上传"按钮。拿到最终 URL 后 onApplied(url)。
@@ -19,6 +20,7 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
   const { useState, useEffect, useCallback, useRef } = React;
   const [tab, setTab] = useState(TAB.GEN);
   const [prompt, setPrompt] = useState('');
+  const [size, setSize] = useState('');
   const [sel, setSel] = useState({ api_id: '', model: '' });
   const [busy, setBusy] = useState('');          // '' | 'generating' | 'uploading'
   const [err, setErr] = useState('');
@@ -71,7 +73,7 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
     if (!sel.api_id || !sel.model) { setErr('请先选择生成模型'); return; }
     setErr(''); setBusy('generating');
     try {
-      const r = await api.images.generate({ prompt: prompt.trim(), kind, api_id: sel.api_id, model: sel.model, attach });
+      const r = await api.images.generate({ prompt: prompt.trim(), kind, api_id: sel.api_id, model: sel.model, attach, size: size || undefined });
       if (r && (r.needs_credentials || r.code === 'credentials_required')) return fail('credentials_required');
       if (r && r.code === 'quota_exceeded') return fail('今日生图次数已达上限');
       if (r && r.image_id) pollImage(r.image_id);
@@ -148,6 +150,8 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
                 border: '1px solid var(--line)', borderRadius: 'var(--r-2)', padding: '10px 12px', fontSize: 13.5, marginBottom: 10 }} />
             <AgentModelPicker prefPrefix="image_gen" fallbackPrefix="gm" capabilityFilter="image_gen" variant="bare"
               onChange={(api_id, model) => setSel({ api_id, model })} />
+            <div style={{ margin: '12px 0 2px', fontSize: 12, color: 'var(--muted)' }}>尺寸 / 比例</div>
+            <ImageSizePicker kind={kind} value={size} onChange={setSize} />
             {busy === 'generating' && <div className="ms-status"><span className="ms-spin" />生成中，请稍候…</div>}
             <div style={{ marginTop: 16, textAlign: 'right' }}>{footerBtn('生成', generate, !!prompt.trim())}</div>
           </div>

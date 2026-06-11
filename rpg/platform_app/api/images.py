@@ -238,6 +238,10 @@ async def api_generate_image(request: Request):
     ref: str | None = body.get("ref") or None
     attach: dict | None = body.get("attach") or None
     save_id: str | None = str(body.get("save_id") or "").strip() or None
+    # 分辨率(UI 或 LLM 都可传):宽高/比例白名单,形如 1024x1024 / 832*1216 / 16:9;非法忽略由 provider 默认
+    import re as _re_size
+    _raw_size = str(body.get("size") or "").strip()
+    size: str | None = _raw_size if _re_size.match(r"^\d{1,5}[x*:]\d{1,5}$", _raw_size) else None
 
     # 校验 attach 结构 + 入队前归属鉴权
     if attach is not None:
@@ -253,11 +257,19 @@ async def api_generate_image(request: Request):
             if not card_id:
                 raise HTTPException(status_code=400, detail="attach.card_id 不能为空")
             init_db()
+            _att_script_id = attach.get("script_id")
             with connect() as db:
-                row = db.execute(
-                    "select 1 from character_cards where id = %s and user_id = %s",
-                    (int(card_id), user_id),
-                ).fetchone()
+                if _att_script_id:
+                    # NPC 卡(user_id=NULL,挂 script_id):owner 走 scripts.owner_id
+                    row = db.execute(
+                        "select 1 from scripts where id = %s and owner_id = %s",
+                        (int(_att_script_id), user_id),
+                    ).fetchone()
+                else:
+                    row = db.execute(
+                        "select 1 from character_cards where id = %s and user_id = %s",
+                        (int(card_id), user_id),
+                    ).fetchone()
             if not row:
                 raise HTTPException(status_code=403, detail="无权为该角色卡生图：卡不存在或不属于当前用户")
         elif attach_type == "script_cover":
@@ -276,6 +288,11 @@ async def api_generate_image(request: Request):
 
     from platform_app.image_jobs import enqueue_image_generation  # type: ignore[import]
 
+    _gen_extra: dict = {}
+    if ref:
+        _gen_extra["ref"] = ref
+    if size:
+        _gen_extra["size"] = size
     result: dict = enqueue_image_generation(
         user_id,
         prompt,
@@ -283,7 +300,7 @@ async def api_generate_image(request: Request):
         api_id=api_id,
         model=model,
         origin="api_direct",
-        extra={"ref": ref} if ref else None,
+        extra=_gen_extra or None,
         attach=attach,
         save_id=save_id,
     )

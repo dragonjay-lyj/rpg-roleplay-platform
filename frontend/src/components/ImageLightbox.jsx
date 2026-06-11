@@ -103,13 +103,15 @@ export default function ImageLightbox({ open, src, alt = '', onClose, onCrop, cr
       const scaleX = d.natW / d.w, scaleY = d.natH / d.h;
       const sx = Math.round(box.x * scaleX), sy = Math.round(box.y * scaleY);
       const sw = Math.max(1, Math.round(box.w * scaleX)), sh = Math.max(1, Math.round(box.h * scaleY));
+      // 自动减小体积:裁剪区最长边限到 1280 等比缩放 + jpeg 0.85 压缩(头像/人设图无需透明通道)
+      const MAX = 1280;
+      let dw = sw, dh = sh;
+      if (Math.max(sw, sh) > MAX) { const k = MAX / Math.max(sw, sh); dw = Math.round(sw * k); dh = Math.round(sh * k); }
       const canvas = document.createElement('canvas');
-      canvas.width = sw; canvas.height = sh;
+      canvas.width = dw; canvas.height = dh;
       const ctx = canvas.getContext('2d');
-      // 用一个 crossOrigin 的新 Image 确保能进 canvas(站内同源,安全)
-      const img = imgRef.current;
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-      const blob = await new Promise((res) => canvas.toBlob(res, 'image/png', 0.95));
+      ctx.drawImage(imgRef.current, sx, sy, sw, sh, 0, 0, dw, dh);
+      const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.85));
       if (blob) await onCrop(blob);
       setMode('view'); setBox(null);
     } catch (err) {

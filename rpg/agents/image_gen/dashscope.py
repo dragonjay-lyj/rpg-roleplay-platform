@@ -103,6 +103,12 @@ def _build_new_body(model: str, prompt: str, params: dict) -> dict[str, Any]:
     for field in ("size", "n", "seed", "watermark", "style", "steps"):
         if field in params:
             parameters[field] = params[field]
+    if "size" in parameters:
+        # dashscope 尺寸格式是 W*H(星号);UI/工具传的 1024x1024 需转换。比例(含:)无法直接用,丢弃。
+        _sz = str(parameters["size"]).replace("X", "x")
+        parameters["size"] = _sz.replace("x", "*") if ":" not in _sz else None
+        if not parameters["size"]:
+            parameters.pop("size", None)
     if parameters:
         body["parameters"] = parameters
     return body
@@ -120,6 +126,12 @@ def _build_legacy_body(model: str, prompt: str, params: dict) -> dict[str, Any]:
     for field in ("size", "n", "seed", "style", "steps"):
         if field in params:
             parameters[field] = params[field]
+    if "size" in parameters:
+        # dashscope 尺寸格式是 W*H(星号);UI/工具传的 1024x1024 需转换。比例(含:)无法直接用,丢弃。
+        _sz = str(parameters["size"]).replace("X", "x")
+        parameters["size"] = _sz.replace("x", "*") if ":" not in _sz else None
+        if not parameters["size"]:
+            parameters.pop("size", None)
     if parameters:
         body["parameters"] = parameters
     return body
