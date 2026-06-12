@@ -78,9 +78,14 @@ class _OpenAICompatBackend:
         if _proxy and not byok_only:
             _client_kwargs["proxy"] = _proxy
             log.info(f"[GM] {display_kind} 出站走用户代理 {_proxy}")
+        # 覆盖 openai SDK 默认 UA(`OpenAI/Python x.y.z`)→ 浏览器 UA。否则挂在 Cloudflare 后的
+        # 中转站会按 UA 用 WAF 把它当 AI 爬虫拦掉(403「Your request was blocked」/ error 1010),
+        # 导致这类中转站聊天/校验/拉取模型全部「不可访问」。详见 core.outbound_ua(已实测)。
+        from core.outbound_ua import openai_default_headers
         kwargs: dict[str, Any] = {
             "api_key": key,
             "timeout": httpx.Timeout(_read_to, connect=10.0),
+            "default_headers": openai_default_headers(),
             # SEC(H-5): OpenAI SDK 默认 follow_redirects=True → base_url_override(admin/local 可设)
             # 配合 301 可把携 api_key 的请求重定向到内网/元数据。自带不跟随重定向的 http_client。
             "http_client": httpx.Client(**_client_kwargs),

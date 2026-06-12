@@ -336,7 +336,10 @@ def _list_openai_compat_models(api: dict[str, Any], user_id: int | None = None) 
         raise RuntimeError("openai SDK 未安装") from exc
     key = _resolve_provider_key(api, user_id)
     base_url = api.get("base_url") or None
-    kwargs: dict[str, Any] = {"api_key": key}
+    # 覆盖 openai SDK 默认 UA → 浏览器 UA,否则 Cloudflare 后的中转站会按 UA 拦掉(WAF 当 AI 爬虫),
+    # 表现为「拉取模型/校验连接不可访问」。详见 core.outbound_ua。
+    from core.outbound_ua import openai_default_headers
+    kwargs: dict[str, Any] = {"api_key": key, "default_headers": openai_default_headers()}
     if base_url:
         kwargs["base_url"] = base_url
     client = OpenAI(**kwargs)
