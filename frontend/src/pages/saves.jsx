@@ -1885,6 +1885,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const [scripts, setScripts] = useStatePL([]);
   const [personas, setPersonas] = useStatePL([]);
   const [userCards, setUserCards] = useStatePL([]);
+  // 本剧本 NPC 角色卡:可直接「扮演 NPC」开局(character_kind='script_card')。配合下方「本世界人」
+  // 出身即「你就是这个 NPC,GM 守世界观」的闭环。后端早已支持(create_save kind='script_card')。
+  const [scriptNpcCards, setScriptNpcCards] = useStatePL([]);
   const [loading, setLoading] = useStatePL(true);
 
   // ── Step 1 state ─────────────────────────────────────────────
@@ -2005,6 +2008,20 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     })();
   }, [open]);
 
+  // 本剧本 NPC 卡:随所选剧本加载,供「选择角色 → 扮演 NPC」。换剧本即换 NPC 列表。
+  React.useEffect(() => {
+    if (!open || !scriptId) { setScriptNpcCards([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await window.api.cards.scriptList(parseInt(scriptId, 10));
+        const list = Array.isArray(r) ? r : (r?.items || r?.cards || []);
+        if (!cancelled) setScriptNpcCards(Array.isArray(list) ? list : []);
+      } catch (_) { if (!cancelled) setScriptNpcCards([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [open, scriptId]);
+
   // 反馈#4:任一表单字段变化即写回草稿(恢复完成后才写,避免初始 reset/默认值覆盖已存草稿)
   React.useEffect(() => {
     if (!open || !draftReadyRef.current) return;
@@ -2026,6 +2043,13 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
     ...userCards.map(c => ({
       key: `user:${c.id || c.slug}`, kind: "user_card", id: c.id || null, slug: c.slug || "",
       name: c.name || t('platform.menu.unnamed'), subtitle: c.identity || t('saves.new_game.card_kind_user'), pinned: false,
+    })),
+    // 本剧本 NPC:直接扮演(character_kind='script_card');配合「本世界人」出身=你就是这个 NPC。
+    ...scriptNpcCards.map(c => ({
+      key: `npc:${c.id}`, kind: "script_card", id: c.id || null, slug: "",
+      name: c.name || t('platform.menu.unnamed'),
+      subtitle: c.identity || c.role || t('saves.new_game.card_kind_npc', { defaultValue: '本剧本 NPC' }),
+      pinned: false,
     })),
   ];
 
@@ -2182,7 +2206,11 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
               <div className="pl-newgame-card-body">
                 <strong>{c.name}</strong>
                 <span className="muted-2" style={{ fontSize: 11.5 }}>
-                  {c.subtitle} · {c.kind === 'persona' ? t('saves.new_game.card_kind_persona') : t('saves.new_game.card_kind_user')}
+                  {c.subtitle} · {c.kind === 'persona'
+                    ? t('saves.new_game.card_kind_persona')
+                    : c.kind === 'script_card'
+                      ? t('saves.new_game.card_kind_npc', { defaultValue: '本剧本 NPC' })
+                      : t('saves.new_game.card_kind_user')}
                 </span>
               </div>
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -2253,7 +2281,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const openPreview = (opt) => {
     const full = opt.kind === 'persona'
       ? personas.find(p => String(p.id || p.slug) === String(opt.id || opt.slug))
-      : userCards.find(c => String(c.id || c.slug) === String(opt.id || opt.slug));
+      : opt.kind === 'script_card'
+        ? scriptNpcCards.find(c => String(c.id) === String(opt.id))
+        : userCards.find(c => String(c.id || c.slug) === String(opt.id || opt.slug));
     const card = full || { name: opt.name, identity: opt.subtitle };
     setPreviewCard({ card: { ...card, identity: card.identity || card.role || opt.subtitle }, name: opt.name });
   };
