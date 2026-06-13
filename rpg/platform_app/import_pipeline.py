@@ -1106,6 +1106,10 @@ def _stage_phase_digests(script_id: int) -> int:
         return n
 
 
+# 高频人名扫描的章节范围,与 UI 文案「扫前 30 章高频角色名」对齐。
+_ENTITY_SCAN_CHAPTERS = 30
+
+
 def _stage_entities(ctl: JobController, script_id: int, user_id: int) -> list[dict[str, Any]]:
     """高频人名提取（中文 2-3 字 + 出现次数排序）。
 
@@ -1114,8 +1118,11 @@ def _stage_entities(ctl: JobController, script_id: int, user_id: int) -> list[di
     """
     with connect() as db:
         chapters = db.execute(
-            "select content from script_chapters where script_id = %s",
-            (script_id,),
+            # 与 UI「扫前 30 章高频角色名」一致:只扫前 30 章(主角通常早出场)。
+            # 此前漏 order/limit → 扫全书,把后期/次要角色也生成了卡(用户反馈:全书 NPC 都生成了)。
+            "select content from script_chapters where script_id = %s "
+            "order by chapter_index limit %s",
+            (script_id, _ENTITY_SCAN_CHAPTERS),
         ).fetchall()
         existing_names = set()
         for r in db.execute(
