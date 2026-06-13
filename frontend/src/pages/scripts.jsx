@@ -2072,13 +2072,11 @@ function ChaptersModal({ script, onClose, onChanged }) {
         title={`${script.title} · ${t('scripts.editor.resplit_prompt_title')}`}
         hint="POST /api/scripts/{id}/resplit"
         fields={[
+          // 复用与「导入」完全一致的规则列表(= 后端 chapter_splitter.RULE_PATTERNS 的真实键)。
+          // 旧版这里硬编码了 blank/marker/regex,后端没有这些规则 → 静默退化成 auto、且 regex
+          // 不等于 custom 导致自定义正则被忽略(用户反馈:整本重切识别不出第X章,导入却能)。
           { key: "rule", label: t('scripts.import.field_rule'), type: "select", default: "auto",
-            options: [
-              { value: "auto",     label: t('scripts.editor.resplit_rule_auto') },
-              { value: "blank",    label: t('scripts.editor.resplit_rule_blank') },
-              { value: "marker",   label: t('scripts.editor.resplit_rule_marker') },
-              { value: "regex",    label: t('scripts.editor.resplit_rule_regex') },
-            ] },
+            options: SPLIT_RULES.map(r => ({ value: r.id, label: t(r.labelKey) })) },
           { key: "pattern", label: t('scripts.import.field_custom_regex'), placeholder: t('scripts.import.field_custom_regex_placeholder') },
         ]}
         submitLabel={t('scripts.editor.resplit_submit')}
