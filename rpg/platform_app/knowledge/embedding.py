@@ -160,8 +160,9 @@ def _get_vertex_client(user_id: int | None = None):
     为用户兜底成本($150 一次性 + $1/月 vs LLM $135-27000/月)。Vertex
     text-embedding-004 有免费配额,平台 SA 兜底实际不花钱。
 
-    传 allow_platform_fallback=True → 即使生产鉴权模式,user 没 BYOK SA 也允许
-    走 rpg/vertex_sa.json 平台共享 SA(跟 LLM 的严格 BYOK 区分对待)。
+    平台共享 SA 兜底**仅 admin/vip 及系统任务(user_id=None)**可用 —— 普通用户必须 BYOK
+    自己的 Vertex SA(或换 OpenAI 兼容 embedding key),否则不给平台兜底。否则会变成全员
+    白嫖平台的 embedding 成本(本来只想给 VIP)。用户自己的 BYOK SA 不受影响,任何用户都优先用自己的。
     """
     cache_key = f"client:{user_id}"
     if cache_key in _VERTEX_CLIENT_CACHE:
@@ -170,7 +171,10 @@ def _get_vertex_client(user_id: int | None = None):
         from google import genai
         from core.vertex_sa import load_sa_credentials
 
-        credentials, project_id = load_sa_credentials(user_id, allow_platform_fallback=True)
+        # 平台共享 SA 兜底仅 admin/vip(_is_admin 含 vip_user)+ 系统任务(无 user);
+        # 普通用户只能用自己的 BYOK SA,拿不到平台兜底。
+        allow_fb = (user_id is None) or _is_admin(user_id)
+        credentials, project_id = load_sa_credentials(user_id, allow_platform_fallback=allow_fb)
         if credentials is None or project_id is None:
             log.warning("[embedding] no Vertex SA available (user_id=%s)", user_id)
             _VERTEX_CLIENT_CACHE[cache_key] = None
