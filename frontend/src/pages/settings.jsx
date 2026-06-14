@@ -221,7 +221,7 @@ function ExtractorSection() {
   // Wave 11.5-A: 旧默认是 "vertex_ai",改为统一的 "agent_platform"(后端 v024 migration
    //   会把 user_credentials.api_id = 'vertex'/'vertex_ai' 自动改名)。
   const [apiId, setApiId] = useStatePL("agent_platform");
-  const [modelRealName, setModelRealName] = useStatePL("gemini-3.5-flash");
+  const [modelRealName, setModelRealName] = useStatePL("");
   const [apis, setApis] = useStatePL([]);
   const save = useAutoSave(t('settings.extractor.title'), "extractor");
   useEffectPL(() => {
@@ -281,7 +281,7 @@ function ExtractorSection() {
         <AgentModelPicker
           prefPrefix="extractor"
           preferProvider="deepseek"
-          defaultModel="gemini-3.5-flash"
+          defaultModel={null}
           variant="bare"
           configHash="settings-models"
         />
@@ -2465,457 +2465,110 @@ function ParamSlider({ label, desc, value, min, max, step, unit, onChange }) {
   );
 }
 
-/* ModuleModelsSection — task 56：让用户给每个 LLM 子模块单独选模型。
+/* ModuleModelsSection — 给每个 LLM / RAG / 生图子模块单独选模型。
 
-   8 个模块,key 命名跟后端 _resolve_preferred_* 函数对齐:
-     · 主 GM 默认模型           gm.api_id           + gm.model_real_name
-     · Sub-GM (Context Agent)  sub_agent_model_override = {api_id, model}
-     · Command Agent (/set)    set_parser.api_id   + set_parser.model_real_name
-     · Console Assistant       console_assistant_model_override = {api_id, model}
-     · Extractor               extractor.api_id    + extractor.model_real_name
-     · Character Card Generator character_card_generator.api_id + .model_real_name
-     · Critic (一致性评分)      critic.api_id       + critic.model_real_name
-     · Acceptance Verifier     acceptance_verifier.api_id + .model_real_name
+   ── 统一规范组件 ──────────────────────────────────────────────────────────
+   每行的「选模型」一律用 <AgentModelPicker variant="bare"> —— 全站唯一实现,
+   不再自造 CSSelect + 数据加载 + 自定义手填。各模块只声明 prefPrefix / persistShape /
+   capabilityFilter / allowInherit,组件内部负责:仅展示已配 key 的 provider 的真实模型、
+   按 capability 过滤、自定义手填兜底、双 flat key / dict 单 key 落库、「跟随主 GM」清空偏好。
 
-   特殊形态:
-     sub_agent_model_override / console_assistant_model_override 后端读 dict
-     {api_id, model};未配置 = 跟主 GM。删除该 dict (POST {key, value: null}) 即
-     "重置为跟随主 GM"。其它模块用扁平 *.api_id / *.model_real_name 两个 key。
-
-   下拉只展示当前用户已配置 API Key 且远端同步后的模型。不能显示全局
-   selected_model / 服务端 Vertex,否则会把未上传的凭证伪装成可用模型。 */
+   落库形态:
+     · flat(默认)         : <prefPrefix>.api_id + <prefPrefix>.model_real_name
+     · dict(sub_agent /    : persistShape="dict" + dictKey = { api_id, model }
+        console)
+   主 GM 不可继承(它是被继承者);embedder / image_gen allowInherit=false(必须自己选)。
+   embedder 还传 platformVertexAllowed(admin/vip 才显示平台 vertex embedding 兜底)。 */
 function ModuleModelsSection() {
   const { t } = useTranslation();
   const MODULES = [
-    { id: "gm",            label: "主 GM 默认模型",          shape: "flat", apiKey: "gm.api_id",                     modelKey: "gm.model_real_name",                     tip: "玩家对话默认使用的主模型。这里选择后会写入个人默认模型,新开局和未单独切模型的存档会优先使用它。" },
-    { id: "sub_agent",     label: "上下文子代理",           shape: "dict", overrideKey: "sub_agent_model_override", tip: "整理玩家意图 + 检索计划的子代理;空 = 跟主 GM 共享实例。" },
-    { id: "set_parser",    label: "指令解析代理",           shape: "flat", apiKey: "set_parser.api_id",             modelKey: "set_parser.model_real_name",             tip: "/set 命令自然语言解析子代理。" },
-    { id: "console",       label: "控制台助手",             shape: "dict", overrideKey: "console_assistant_model_override", tip: "侧栏控制台助手专用模型;空 = 跟主 GM。" },
-    { id: "extractor",     label: "叙事提取器",             shape: "flat", apiKey: "extractor.api_id",              modelKey: "extractor.model_real_name",              tip: "GM 叙事二次解析抽 ops (两步式 GM 第二步)。" },
-    { id: "card_gen",      label: "角色卡生成器",           shape: "flat", apiKey: "character_card_generator.api_id", modelKey: "character_card_generator.model_real_name", tip: "侧栏创意工具:生成 / 微调角色卡。" },
-    { id: "card_import",   label: "AI 整理卡字段",          shape: "flat", apiKey: "card_import.api_id",            modelKey: "card_import.model_real_name",            tip: "导入酒馆卡时,用 LLM 把一整段自由文本档案整理成结构化字段(身份/背景/外貌/性格等)。仅在导入勾选「用 AI 整理字段」时调用;空 = 跟主 GM。" },
-    { id: "critic",        label: "一致性评分",             shape: "flat", apiKey: "critic.api_id",                 modelKey: "critic.model_real_name",                 tip: "角色卡生成的一致性评分子代理 (0-1 阈值 0.6)。" },
-    { id: "verifier",      label: "接受条件验证",           shape: "flat", apiKey: "acceptance_verifier.api_id",    modelKey: "acceptance_verifier.model_real_name",    tip: "GM 输出是否满足 curator 设置的 acceptance 条件。" },
-    { id: "phase_digest",  label: "阶段浓缩 (compact)",     shape: "flat", apiKey: "phase_digest.api_id",           modelKey: "phase_digest.model_real_name",           tip: "长局历史按阶段浓缩成摘要(compact),供 GM 记忆远期剧情;空 = 系统默认。" },
-    { id: "black_swan",    label: "黑天鹅事件代理",         shape: "flat", apiKey: "black_swan_agent.api_id",        modelKey: "black_swan_agent.model_real_name",       tip: "主动触发世界突发事件的子代理;空 = 系统默认。" },
-    { id: "agent",         label: "通用子代理兜底",         shape: "flat", apiKey: "agent.api_id",                   modelKey: "agent.model_real_name",                  tip: "未单独配置模型的其它子代理统一兜底用它;空 = 跟主 GM / 系统默认。" },
-    { id: "embedder",      label: "向量嵌入 (RAG)",         shape: "flat", apiKey: "embed.api_id",                  modelKey: "embed.model_real_name",                  capsFilter: ["embedding"], allowInherit: false, defaultApiId: "vertex_ai", defaultModelId: "text-embedding-004", credentialApiId: "AgentPlatform", tip: "向量嵌入模型，用于 RAG 召回 + 拆书后的语义检索。系统默认 Vertex text-embedding-004，需要在「API 密钥」配 Vertex SA JSON 才能用。可改成其他 embedding 模型。" },
-    { id: "image_gen",     label: "图像生成模型",           shape: "flat", apiKey: "image_gen.api_id",              modelKey: "image_gen.model_real_name",              capsFilter: ["image_gen"], allowInherit: false, tip: "生图功能(聊天内 AI 生图 / 角色卡头像 / 剧本封面 / 人设图)默认使用的 provider 和模型;聊天里 GM 自主调用生图工具也走它。需在「API 密钥」配置对应 BYOK key 才能生成(未配会提示去配)。与生图弹窗里的模型选择同步。" },
+    { id: "gm",            label: "主 GM 默认模型",          prefPrefix: "gm",                       tip: "玩家对话默认使用的主模型。这里选择后会写入个人默认模型,新开局和未单独切模型的存档会优先使用它。" },
+    { id: "sub_agent",     label: "上下文子代理",           persistShape: "dict", dictKey: "sub_agent_model_override", inherit: true, tip: "整理玩家意图 + 检索计划的子代理;跟随主 GM = 跟主 GM 共享实例。" },
+    { id: "set_parser",    label: "指令解析代理",           prefPrefix: "set_parser",               inherit: true, tip: "/set 命令自然语言解析子代理。" },
+    { id: "console",       label: "控制台助手",             persistShape: "dict", dictKey: "console_assistant_model_override", inherit: true, tip: "侧栏控制台助手专用模型;跟随主 GM。" },
+    { id: "extractor",     label: "叙事提取器",             prefPrefix: "extractor",                inherit: true, tip: "GM 叙事二次解析抽 ops (两步式 GM 第二步)。" },
+    { id: "card_gen",      label: "角色卡生成器",           prefPrefix: "character_card_generator", inherit: true, tip: "侧栏创意工具:生成 / 微调角色卡。" },
+    { id: "card_import",   label: "AI 整理卡字段",          prefPrefix: "card_import",              inherit: true, tip: "导入酒馆卡时,用 LLM 把一整段自由文本档案整理成结构化字段(身份/背景/外貌/性格等)。仅在导入勾选「用 AI 整理字段」时调用;跟随主 GM。" },
+    { id: "critic",        label: "一致性评分",             prefPrefix: "critic",                   inherit: true, tip: "角色卡生成的一致性评分子代理 (0-1 阈值 0.6)。" },
+    { id: "verifier",      label: "接受条件验证",           prefPrefix: "acceptance_verifier",      inherit: true, tip: "GM 输出是否满足 curator 设置的 acceptance 条件。" },
+    { id: "phase_digest",  label: "阶段浓缩 (compact)",     prefPrefix: "phase_digest",             inherit: true, tip: "长局历史按阶段浓缩成摘要(compact),供 GM 记忆远期剧情;跟随主 GM = 系统默认。" },
+    { id: "black_swan",    label: "黑天鹅事件代理",         prefPrefix: "black_swan_agent",         inherit: true, tip: "主动触发世界突发事件的子代理;跟随主 GM = 系统默认。" },
+    { id: "agent",         label: "通用子代理兜底",         prefPrefix: "agent",                    inherit: true, tip: "未单独配置模型的其它子代理统一兜底用它;跟随主 GM / 系统默认。" },
+    { id: "embedder",      label: "向量嵌入 (RAG)",         prefPrefix: "embed",  capabilityFilter: "embedding", inherit: false, defaultModel: "text-embedding-004", preferProvider: "vertex_ai", tip: "向量嵌入模型，用于 RAG 召回 + 拆书后的语义检索。系统默认 Vertex text-embedding-004，需要在「API 密钥」配 Vertex SA JSON 才能用。可改成其他 embedding 模型。" },
+    { id: "image_gen",     label: "图像生成模型",           prefPrefix: "image_gen", capabilityFilter: "image_gen", inherit: false, fallbackPrefix: "gm", tip: "生图功能(聊天内 AI 生图 / 角色卡头像 / 剧本封面 / 人设图)默认使用的 provider 和模型;聊天里 GM 自主调用生图工具也走它。需在「API 密钥」配置对应 BYOK key 才能生成(未配会提示去配)。与生图弹窗里的模型选择同步。" },
   ];
 
-  const [prefs, setPrefs] = useStatePL({});
-  const [catalog, setCatalog] = useStatePL({ apis: [], selected: null });
-  const [credentialApiIds, setCredentialApiIds] = useStatePL(new Set());
-  const [savingId, setSavingId] = useStatePL(null);
-  // task: embedder 兜底状态 — RAG 模型 section banner 文案要看 admin/user/fallback
+  // task: embedder 兜底状态 — RAG 模型 section banner 文案 + 是否给 admin/vip 平台 vertex 兜底
   const [embedderStatus, setEmbedderStatus] = useStatePL(null);
-  // 「自定义模型」态:目录里没有用户的模型时,允许手填(provider + model 名),
-  // 与 AgentModelPicker 的 __custom_model__ 行为一致。按模块 id 存草稿 {api_id, model}。
-  const [customDraft, setCustomDraft] = useStatePL({});
-
-  const reload = React.useCallback(async () => {
-    try {
-      const [profile, models, creds, embedSt] = await Promise.all([
-        window.api.account.profile(),
-        window.api.models.list().catch(() => ({})),
-        window.api.credentials.list().catch(() => ({ items: [] })),
-        fetch('/api/me/embedder/status', { credentials: 'include' }).then(r => r.json()).catch(() => null),
-      ]);
-      setPrefs((profile && profile.preferences) || {});
-      const ids = new Set();
-      for (const c of (creds?.items || creds?.credentials || [])) {
-        if (c.enabled === false) continue;
-        if (!(c.has_credential || c.has_key || c.key_hint)) continue;
-        ids.add(catalogApiIdForCredential(c.api_id || c.id));
-      }
-      setCredentialApiIds(ids);
-      const apis = models?.models?.apis ?? (Array.isArray(models?.apis) ? models.apis : []) ?? [];
-      const sel = models?.models?.selected ?? models?.selected ?? null;
-      setCatalog({ apis: Array.isArray(apis) ? apis : [], selected: sel });
-      setEmbedderStatus(embedSt?.ok ? embedSt : null);
-    } catch (_) {}
+  useEffectPL(() => {
+    fetch('/api/me/embedder/status', { credentials: 'include' })
+      .then(r => r.json()).then(es => setEmbedderStatus(es?.ok ? es : null)).catch(() => {});
   }, []);
-  useEffectPL(() => { reload(); }, [reload]);
-
-  // 把所有可选模型扁平成 [{api_id, real_name, display, enabled, capabilities}]
-  const flatModels = useMemoPL(() => {
-    const out = [];
-    for (const api of (catalog.apis || [])) {
-      const aid = catalogApiIdForCredential(api.api_id || api.id);
-      if (!credentialApiIds.has(aid)) continue;
-      const mods = api.models || api.entries || [];
-      for (const m of mods) {
-        if (m.enabled === false) continue;
-        out.push({
-          api_id: aid,
-          real_name: m.real_name || m.id,
-          display: m.display_name || m.real_name || m.id,
-          enabled: true,
-          capabilities: m.capabilities || m.caps || [],
-        });
-      }
-    }
-    return out;
-  }, [catalog, credentialApiIds]);
-
-  // 按模块的 capsFilter 过滤(embedder 只显示 embedding 能力的条目)
-  // 反馈:按 category 显示——没声明 capsFilter 的都是聊天/LLM 模块,一律排除 embedding 模型
-  //(否则 GM/上下文代理等 chat 选择器会混进 RAG embedding 模型)。
-  const modelsForModule = (mod) => {
-    const need = Array.isArray(mod.capsFilter) ? mod.capsFilter : null;
-    if (!need || need.length === 0) return flatModels.filter(m => !(m.capabilities || []).includes("embedding"));
-    let pool = flatModels;
-    // embedder 特例:admin/vip 有平台 Vertex SA 兜底,即使没配 vertex 用户凭证,也应能选
-    // 平台提供的 vertex embedding 模型(否则默认 text-embedding-004 显示「未在 catalog」)。
-    if (mod.id === "embedder" && embedderStatus && embedderStatus.platform_fallback_available) {
-      const seen = new Set(pool.map(m => `${m.api_id}/${m.real_name}`));
-      for (const api of (catalog.apis || [])) {
-        const aid = catalogApiIdForCredential(api.api_id || api.id);
-        if (aid !== "vertex_ai") continue;
-        for (const m of (api.models || api.entries || [])) {
-          const caps = m.capabilities || m.caps || [];
-          if (!caps.includes("embedding")) continue;
-          const key = `${aid}/${m.real_name || m.id}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          pool = pool.concat([{ api_id: aid, real_name: m.real_name || m.id, display: m.display_name || m.real_name || m.id, enabled: m.enabled !== false, capabilities: caps }]);
-        }
-      }
-    }
-    return pool.filter(m => need.every(c => (m.capabilities || []).includes(c)));
-  };
-
-  const mainCurrent = useMemoPL(() => {
-    const a = prefs["gm.api_id"];
-    const m = prefs["gm.model_real_name"];
-    if (a && m && flatModels.some(x => x.api_id === catalogApiIdForCredential(a) && x.real_name === m)) {
-      return { api_id: catalogApiIdForCredential(a), real_name: m };
-    }
-    if (flatModels.length) return { api_id: flatModels[0].api_id, real_name: flatModels[0].real_name };
-    return null;
-  }, [prefs, flatModels]);
-
-  /** 返回当前模块"生效中"的 {api_id, real_name} 或 null = 跟主 GM */
-  const currentFor = (mod) => {
-    if (mod.shape === "dict") {
-      const v = prefs[mod.overrideKey];
-      if (v && typeof v === "object" && (v.api_id || v.model)) {
-        const api_id = catalogApiIdForCredential(v.api_id || mainCurrent?.api_id);
-        const real_name = v.model || mainCurrent?.real_name;
-        if (flatModels.some(x => x.api_id === api_id && x.real_name === real_name)) {
-          return { api_id, real_name };
-        }
-        return null;
-      }
-      return null;
-    }
-    // flat
-    const a = prefs[mod.apiKey];
-    const m = prefs[mod.modelKey];
-    if (mod.id === "gm") {
-      return mainCurrent;
-    }
-    if (a || m) {
-      const api_id = catalogApiIdForCredential(a || mainCurrent?.api_id);
-      const real_name = m || mainCurrent?.real_name;
-      if (flatModels.some(x => x.api_id === api_id && x.real_name === real_name)) {
-        return { api_id, real_name };
-      }
-      return null;
-    }
-    // allowInherit=false 的模块(如 embedder):没显式配 prefs 时,显示系统默认
-    if (mod.allowInherit === false && mod.defaultApiId && mod.defaultModelId) {
-      return { api_id: mod.defaultApiId, real_name: mod.defaultModelId, is_default: true };
-    }
-    return null;
-  };
-
-  /** 把下拉选中的 "api_id/real_name" or "__inherit__" 写回后端 */
-  const handleChange = async (mod, value) => {
-    setSavingId(mod.id);
-    try {
-      const calls = [];
-      if (value === "__inherit__") {
-        if (mod.shape === "dict") {
-          calls.push(window.api.account.preferences({ [mod.overrideKey]: null }));
-        } else {
-          calls.push(window.api.account.preferences({ [mod.apiKey]: null }));
-          calls.push(window.api.account.preferences({ [mod.modelKey]: null }));
-        }
-      } else {
-        const sep = value.indexOf("/");
-        if (sep < 0) return;
-        const api_id = catalogApiIdForCredential(value.slice(0, sep));
-        const real_name = value.slice(sep + 1);
-        if (mod.shape === "dict") {
-          calls.push(window.api.account.preferences({ [mod.overrideKey]: { api_id, model: real_name } }));
-        } else {
-          calls.push(window.api.account.preferences({ [mod.apiKey]: api_id }));
-          calls.push(window.api.account.preferences({ [mod.modelKey]: real_name }));
-        }
-      }
-      await Promise.all(calls);
-      await reload();
-      window.toast?.(t('settings.modules.save_ok', { label: mod.label }), { kind: "ok", duration: 1800 });
-    } catch (e) {
-      window.toast?.(t('settings.modules.save_fail', { label: mod.label }), { kind: "danger", detail: e?.message, duration: 3200 });
-    } finally {
-      setSavingId(null);
-    }
-  };
-
-  // 「自定义」可选 provider 列表:用户已配 key 的 provider(catalog 显示名 + 仅有凭据的自定义 API)。
-  // 与 AgentModelPicker.providerOptions 同构 —— 自定义模型也得指定 provider。
-  const providerOptions = useMemoPL(() => {
-    const seen = new Set();
-    const out = [];
-    for (const a of (catalog.apis || [])) {
-      const id = catalogApiIdForCredential(a.api_id || a.id);
-      if (!id || !credentialApiIds.has(id) || seen.has(id)) continue;
-      seen.add(id);
-      out.push({ value: id, label: a.display_name || a.name || id });
-    }
-    for (const id of credentialApiIds) {
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      out.push({ value: id, label: id });
-    }
-    return out;
-  }, [catalog, credentialApiIds]);
-
-  // 进入「自定义」态:用当前生效值(或第一个已配 provider)预填草稿。
-  const openCustom = (mod) => {
-    const cur = currentFor(mod);
-    const api_id = cur?.api_id || providerOptions[0]?.value || "";
-    setCustomDraft(d => ({ ...d, [mod.id]: { api_id, model: cur?.real_name || "" } }));
-  };
-  const closeCustom = (modId) => setCustomDraft(d => { const n = { ...d }; delete n[modId]; return n; });
-  // 自定义保存:复用 handleChange 的同一持久化路径(扁平双 key / dict {api_id, model})。
-  // draft 显式传入(覆盖 state 里可能尚未落地的草稿),避免未触碰输入框时拿到 undefined。
-  const saveCustom = async (mod, draft = customDraft[mod.id]) => {
-    const api_id = (draft?.api_id || "").trim();
-    const model = (draft?.model || "").trim();
-    if (!api_id || !model) return;
-    await handleChange(mod, `${api_id}/${model}`);
-    closeCustom(mod.id);
-  };
-
-  const resetAll = async () => {
-    setSavingId("__all__");
-    const keys = [];
-    for (const m of MODULES) {
-      if (m.id === "gm") continue;  // 主 GM 不走 override,跳过
-      if (m.shape === "dict") keys.push(m.overrideKey);
-      else { keys.push(m.apiKey); keys.push(m.modelKey); }
-    }
-    try {
-      const batch = {};
-      keys.forEach(k => { batch[k] = null; });
-      await window.api.account.preferences(batch);
-      await reload();
-      window.toast?.(t('settings.modules.reset_ok'), { kind: "ok", duration: 2000 });
-    } catch (e) {
-      window.toast?.(t('settings.modules.reset_fail'), { kind: "danger", detail: e?.message, duration: 3000 });
-    } finally {
-      setSavingId(null);
-    }
-  };
+  // 后端已按 _is_admin gate(admin/vip 才 true);非 vip/admin 不显示平台 vertex embedding。
+  const platformVertexAllowed = !!(embedderStatus && embedderStatus.platform_fallback_available);
 
   return (
     <SetGroup
       title={t('settings.modules.title')}
       description={t('settings.modules.description')}
-      actions={
-        <CSButton variant="normal" disabled={savingId === "__all__"} onClick={resetAll}>
-          {t('settings.modules.reset_all')}
-        </CSButton>
-      }
     >
       <CSBox>
         <span className="muted" style={{fontSize: 12}}>
           {t('settings.modules.hint')}
         </span>
       </CSBox>
-      <div style={{overflowX: "auto"}}>
-        <table className="pl-table" style={{width: "100%", fontSize: 13, marginTop: 8}}>
-          <colgroup>
-            <col style={{width: "26%"}} />
-            <col style={{width: "32%"}} />
-            <col style={{width: "42%"}} />
-          </colgroup>
-          <thead>
-            <tr>
-              <th style={{textAlign: "left", padding: "6px 8px"}}>{t('settings.modules.col_module')}</th>
-              <th style={{textAlign: "left", padding: "6px 8px"}}>{t('settings.modules.col_current')}</th>
-              <th style={{textAlign: "left", padding: "6px 8px"}}>{t('settings.modules.col_override')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {MODULES.map(mod => {
-              const cur = currentFor(mod);
-              const isInherit = !cur && mod.id !== "gm";
-              // task: Set 存的是 catalog id(L2421 ids.add(catalogApiIdForCredential(...))),
-              // 但旧代码这里用 credentialApiIdForCatalog 把 catalog 转 credential 反向了 →
-              // 永远 has=false → 误报「该 provider 还没配 API key」。
-              // 修:统一查 catalog id。mod.credentialApiId 是 credential id(如 'AgentPlatform'),
-              // 转回 catalog id ('vertex_ai') 再查 Set。
-              // 凭据查询必须按【当前选中模型的 provider】(cur.api_id,已是 catalog id),
-              // 不能用模块写死的 mod.credentialApiId —— embedder 写死 AgentPlatform(→vertex_ai),
-              // 用户改用 dashscope 等其它 embedding provider 时会永远查 vertex → 即便已配 key 也误报
-              // 「该 provider 还没配 API key」(用户反馈的 bug)。优先 cur.api_id,无选中再回退模块默认。
-              const credForLookup = cur?.api_id
-                ? catalogApiIdForCredential(cur.api_id)
-                : (mod.credentialApiId ? catalogApiIdForCredential(mod.credentialApiId) : "");
-              const hasCred = !credForLookup || credentialApiIds.has(credForLookup);
-              const value = (mod.shape === "dict")
-                ? (() => {
-                    const v = prefs[mod.overrideKey];
-                    return v && (v.api_id || v.model) ? `${catalogApiIdForCredential(v.api_id || "")}/${v.model || ""}` : "__inherit__";
-                  })()
-                : (mod.id === "gm")
-                  ? (cur ? `${cur.api_id}/${cur.real_name}` : "")
-                  : ((prefs[mod.apiKey] || prefs[mod.modelKey])
-                      ? `${catalogApiIdForCredential(prefs[mod.apiKey] || "")}/${prefs[mod.modelKey] || ""}`
-                      : (cur?.is_default ? `${cur.api_id}/${cur.real_name}` : "__inherit__"));
-              return (
-                <tr key={mod.id} style={{borderTop: "1px solid var(--pl-line, #eee)"}}>
-                  <td style={{padding: "8px 8px", verticalAlign: "top"}}>
-                    <div style={{display: "flex", alignItems: "center", gap: 6}}>
-                      <strong>{mod.label}</strong>
-                      <span className="muted-2" data-tip={mod.tip} style={{cursor: "help", fontSize: 11}}>ⓘ</span>
-                    </div>
-                    <div className="muted" style={{fontSize: 11, marginTop: 2}}>{mod.tip}</div>
-                  </td>
-                  <td style={{padding: "8px 8px", verticalAlign: "top"}} className="mono">
-                    {isInherit ? (
-                      <span className="muted-2" data-tip={t('settings.modules.inherit_tip')}>{t('settings.modules.follow_main')}</span>
-                    ) : cur ? (
-                      <div>
-                        <span>{cur.api_id} · {cur.real_name}</span>
-                        {cur.is_default && <span className="muted-2" style={{fontSize: 11, marginLeft: 6}}>(系统默认)</span>}
-                        {!hasCred && (
-                          <div style={{marginTop: 4, fontSize: 11, color: "var(--color-text-status-warning, #d18a00)"}}>
-                            ⚠ 该 provider 还没配 API key,
-                            <a href="/apis" style={{marginLeft: 4}} onClick={(e) => { e.preventDefault(); plNavigate('apis'); }}>去配置 →</a>
-                          </div>
-                        )}
-                        {/* task: embedder 兜底显式提醒 */}
-                        {mod.id === 'embedder' && embedderStatus && (
-                          embedderStatus.fallback_active ? (
-                            <div style={{marginTop: 4, fontSize: 11, color: "#0972d3"}}>
-                              ℹ️ 配置不可用,已自动切到 <strong>平台兜底</strong>(admin 福利,免费 Gemini API 配额)。
-                            </div>
-                          ) : embedderStatus.is_admin && embedderStatus.user_configured ? (
-                            <div style={{marginTop: 4, fontSize: 11, color: "#1a7e3c"}}>
-                              ✓ 用你自己配的 embedder。调用失败时自动 fallback 平台 Gemini(仅 admin)。
-                            </div>
-                          ) : embedderStatus.is_admin && !embedderStatus.user_configured ? (
-                            <div style={{marginTop: 4, fontSize: 11, color: "#0972d3"}}>
-                              ℹ️ 用 <strong>平台兜底</strong>(admin 福利)。配自己 key 可用自己额度。
-                            </div>
-                          ) : !embedderStatus.user_configured ? (
-                            <div style={{marginTop: 4, fontSize: 11, color: "#d18a00"}}>
-                              ⚠ 普通用户不享受平台兜底。请配自己的 embedder key(Gemini 免费 1500 RPM / OpenAI $0.02/M / Cohere),否则 RAG 召回降级。
-                            </div>
-                          ) : null
-                        )}
-                      </div>
-                    ) : (
-                      <span className="muted-2">{t('common.unknown')}</span>
-                    )}
-                  </td>
-                  <td style={{padding: "8px 8px", verticalAlign: "top"}}>
-                    {/* B3: 原生 <select> 改为 CSSelect，视觉与其他 section 一致 */}
-                    {(() => {
-                      const CUSTOM = "__custom__";
-                      const draft = customDraft[mod.id];
-                      const opts = [];
-                      const visibleModels = modelsForModule(mod);
-                      const knownVals = new Set(visibleModels.map(m => `${m.api_id}/${m.real_name}`));
-                      // 已持久化但不在目录里的值 = 手填的自定义模型;打开行进入自定义态编辑。
-                      const isCustomPersisted = !draft && value !== "__inherit__" && !!value && !knownVals.has(value);
-                      // allowInherit=false 的模块(如 embedder)不给"跟主 GM",必须自己选
-                      if (mod.id !== "gm" && mod.allowInherit !== false) {
-                        opts.push({ value: "__inherit__", label: t('settings.modules.follow_main') });
-                      }
-                      // fallback: 当前 value 不在过滤后的 catalog 里时补一条
-                      if (value !== "__inherit__" && value && !knownVals.has(value)) {
-                        opts.push({ value, label: `${value} ${t('settings.modules.not_in_catalog')}` });
-                      }
-                      for (const m of visibleModels) {
-                        opts.push({
-                          value: `${m.api_id}/${m.real_name}`,
-                          label: `${m.api_id} · ${m.real_name}${m.enabled ? "" : ` ${t('settings.modules.disabled_model')}`}`,
-                          disabled: !m.enabled,
-                        });
-                      }
-                      // 末尾追加「自定义…」,与 AgentModelPicker 一致(目录没有你的模型时手填)
-                      opts.push({ value: CUSTOM, label: "自定义…(手动填写模型名)" });
-                      const inCustom = !!draft || isCustomPersisted;
-                      const selectedOpt = inCustom
-                        ? { value: CUSTOM, label: "自定义…" }
-                        : (opts.find(o => o.value === value) || null);
-                      return (
-                        <div style={{ display: "grid", gap: 8 }}>
-                          <CSSelect
-                            selectedOption={selectedOpt}
-                            options={opts}
-                            placeholder={flatModels.length ? undefined : "请先在 API 设置添加并同步模型"}
-                            disabled={savingId === mod.id || savingId === "__all__" || flatModels.length === 0}
-                            onChange={({ detail }) => {
-                              const v = detail.selectedOption.value;
-                              if (v === CUSTOM) { openCustom(mod); }
-                              else { closeCustom(mod.id); handleChange(mod, v); }
-                            }}
-                          />
-                          {inCustom && (() => {
-                            const d = draft || { api_id: currentFor(mod)?.api_id || providerOptions[0]?.value || "", model: value && value !== "__inherit__" ? value.slice(value.indexOf("/") + 1) : "" };
-                            const setD = (patch) => setCustomDraft(s => ({ ...s, [mod.id]: { ...d, ...patch } }));
-                            const provSel = providerOptions.find(o => o.value === d.api_id)
-                              || (d.api_id ? { value: d.api_id, label: d.api_id } : null);
-                            return (
-                              <div style={{ display: "grid", gap: 8 }}>
-                                <CSSelect
-                                  selectedOption={provSel}
-                                  options={providerOptions}
-                                  placeholder="选择 provider"
-                                  disabled={savingId === mod.id || providerOptions.length === 0}
-                                  onChange={({ detail }) => setD({ api_id: detail.selectedOption.value })}
-                                />
-                                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8 }}>
-                                  <CSInput
-                                    value={d.model}
-                                    placeholder="填写模型名,例如 gpt-4o-mini"
-                                    disabled={savingId === mod.id || !d.api_id}
-                                    onChange={({ detail }) => setD({ model: detail.value })}
-                                  />
-                                  <CSButton
-                                    loading={savingId === mod.id}
-                                    disabled={savingId === mod.id || !d.api_id || !(d.model || "").trim()}
-                                    onClick={() => saveCustom(mod, d)}
-                                  >
-                                    保存
-                                  </CSButton>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      );
-                    })()}
-                    {mod.id === "embedder" && (
-                      <div style={{marginTop: 6, fontSize: 11, color: "var(--muted)"}}>
-                        ℹ️ 所有 embedding 统一输出 768 维(与向量库对齐;OpenAI/通义自动降维)。
-                        Anthropic、DeepSeek 无 embedding 接口,故不在此列。
-                        <strong> 切换 embedder 后,已嵌过的剧本需重新嵌入才会用新模型</strong>(旧向量与新模型不互通)。
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div style={{ display: "grid", gap: 14, marginTop: 8 }}>
+        {MODULES.map(mod => (
+          <div key={mod.id} style={{ borderTop: "1px solid var(--pl-line, #eee)", paddingTop: 12 }}>
+            <div style={{display: "flex", alignItems: "center", gap: 6, marginBottom: 2}}>
+              <strong>{mod.label}</strong>
+              <span className="muted-2" data-tip={mod.tip} style={{cursor: "help", fontSize: 11}}>ⓘ</span>
+            </div>
+            <div className="muted" style={{fontSize: 11, marginBottom: 8}}>{mod.tip}</div>
+            <AgentModelPicker
+              prefPrefix={mod.prefPrefix}
+              persistShape={mod.persistShape || "flat"}
+              dictKey={mod.dictKey || null}
+              capabilityFilter={mod.capabilityFilter || null}
+              allowInherit={!!mod.inherit}
+              defaultModel={mod.defaultModel || null}
+              preferProvider={mod.preferProvider || null}
+              fallbackPrefix={mod.fallbackPrefix || null}
+              platformVertexAllowed={mod.id === "embedder" ? platformVertexAllowed : false}
+              variant="bare"
+              configHash="apis"
+            />
+            {/* embedder 兜底状态提醒(admin/vip 平台 vertex / 普通用户引导配自己 key) */}
+            {mod.id === 'embedder' && embedderStatus && (
+              <div style={{marginTop: 6}}>
+                {embedderStatus.fallback_active ? (
+                  <div style={{fontSize: 11, color: "#0972d3"}}>
+                    配置不可用,已自动切到 <strong>平台兜底</strong>(admin/vip 福利,免费 Gemini API 配额)。
+                  </div>
+                ) : embedderStatus.is_admin && embedderStatus.user_configured ? (
+                  <div style={{fontSize: 11, color: "#1a7e3c"}}>
+                    用你自己配的 embedder。调用失败时自动 fallback 平台 Gemini(仅 admin/vip)。
+                  </div>
+                ) : embedderStatus.is_admin && !embedderStatus.user_configured ? (
+                  <div style={{fontSize: 11, color: "#0972d3"}}>
+                    用 <strong>平台兜底</strong>(admin/vip 福利)。配自己 key 可用自己额度。
+                  </div>
+                ) : !embedderStatus.user_configured ? (
+                  <div style={{fontSize: 11, color: "#d18a00"}}>
+                    普通用户不享受平台兜底。请配自己的 embedder key(Gemini 免费 1500 RPM / OpenAI $0.02/M / Cohere),否则 RAG 召回降级。
+                  </div>
+                ) : null}
+              </div>
+            )}
+            {mod.id === "embedder" && (
+              <div style={{marginTop: 6, fontSize: 11, color: "var(--muted)"}}>
+                所有 embedding 统一输出 768 维(与向量库对齐;OpenAI/通义自动降维)。
+                Anthropic、DeepSeek 无 embedding 接口,故不在此列。
+                <strong> 切换 embedder 后,已嵌过的剧本需重新嵌入才会用新模型</strong>(旧向量与新模型不互通)。
+              </div>
+            )}
+          </div>
+        ))}
       </div>
       <CSBox>
         <span className="muted" style={{fontSize: 11}}>
@@ -4290,6 +3943,7 @@ export {
   SettingsPage,
   MODELS_DATA,
   PROVIDERS_CONFIG,
+  normalizeApiId,
   CAP_LABEL,
   ApiModelsList,
   AddModelModal,

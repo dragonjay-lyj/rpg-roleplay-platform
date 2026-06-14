@@ -1365,6 +1365,10 @@ async def api_embedder_status(user=Depends(require_user)):
             user_configured = True
             break
     platform_available = bool(_os.environ.get("EMBED_API_KEY"))
+    # 平台 vertex embedding 兜底已收紧为仅 admin/vip(_get_vertex_client allow_fb / _resolve_embed_config)。
+    # platform_fallback_available 必须与执行层一致地 _is_admin gate —— 否则普通用户也收到 True,
+    # 前端会据此错误地展示平台 vertex embedding 模型(越权)+ 信息泄露。
+    platform_fallback_available = platform_available and is_admin_user
     if user_configured:
         effective = "user"
     elif is_admin_user and platform_available:
@@ -1380,7 +1384,7 @@ async def api_embedder_status(user=Depends(require_user)):
         "ok": True,
         "is_admin": is_admin_user,
         "user_configured": user_configured,
-        "platform_fallback_available": platform_available,
+        "platform_fallback_available": platform_fallback_available,
         "effective_source": effective,
         "fallback_active": (effective == "platform_fallback"),
         "preflight": preflight,

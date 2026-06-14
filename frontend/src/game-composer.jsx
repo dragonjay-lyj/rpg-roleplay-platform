@@ -444,6 +444,11 @@ function AttachMenu({ onPick, onClose, triggerRef }) {
   );
 }
 
+/* ModelPopover — 游戏内底栏「模型」浮层。
+   重构:模型列表 / 已配 key 过滤 / health / pricing / 切换落库(/api/models/select)
+   全部委托给全站唯一规范组件 AgentModelPicker(variant="popover")。本组件只保留游戏台
+   专属的浮层外壳:向上展开定位、点外/Esc 关闭、存档级 saveId、底部 EffortSection。
+   AgentModelPicker.onChange(api_id, model) 回填本地选中态,供 EffortSection + onPick 用。 */
 function ModelPopover({ current, onPick, align = "left", gameState, onClose, triggerRef }) {
   const { t } = useTranslation();
   // A1: 取当前存档 id（从 /api/state 的 gameState.save_id）用于存档级模型切换
@@ -453,6 +458,8 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
       ? gameState._raw.save_id
       : null;
   const menuRef = useRefC(null);
+  // 当前选中态(api_id::model_real_name) — 由 AgentModelPicker onChange 回填,供 EffortSection 用。
+  const [selectedKey, setSelectedKey] = useStateC("");
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
     const onOutside = (e) => {
@@ -468,273 +475,41 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     };
   }, [onClose, triggerRef]);
   // task 141 / Bug fix: max-height 自适应 trigger 上方可用空间,popover 不冲出 viewport 顶。
-  // 修正:同时加 viewport 上限(window.innerHeight - 60)防止屏矮时计算值过大;
-  // 并确保容器是 flex column,让搜索框(flex-shrink:0)始终可见,列表区滚动。
   React.useLayoutEffect(() => {
     if (!menuRef.current || !triggerRef?.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const vh = window.innerHeight || document.documentElement.clientHeight || 600;
-    // 向上展开:封顶 = min(trigger 上方可用空间-16, 60vh, 480)。
-    // 关键修:之前用 vh-60(≈整屏高)覆盖了 CSS 的 480 上限,导致模型多时 popover
-    // 高到把顶部搜索框顶出视口外、够不到。必须同时受 480/60vh 约束。
     const aboveSpace = Math.min(rect.top - 16, Math.round(vh * 0.6), 480);
     menuRef.current.style.maxHeight = Math.max(200, aboveSpace) + "px";
-    // 强制 flex column(CSS 类已含,inline 兜底防 specificity 问题)
     menuRef.current.style.display = "flex";
     menuRef.current.style.flexDirection = "column";
   }, []);
 
-  // 真实模型目录走后端 /api/models 拉新鲜数据(包含 _inject_health 的 health 字段)。
-  // 不再用 gameState.models 缓存 — 那来自 /api/state 不带 health,UI 会全显 untested。
-  // task 42: picker 必须知道每个模型的 health 状态才能灰掉不可达项。
-  const [catalog, setCatalog] = useStateC(null);
-  const [busy, setBusy] = useStateC(false);
-  const [err, setErr] = useStateC("");
-  const [reloadTick, setReloadTick] = useStateC(0);   // 凭据变更 / 回到本页 时重拉(issue #22)
-  React.useEffect(() => {
-    if (!window.api || !window.api.models || !window.api.models.list) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await window.api.models.list();
-        const realCatalog = (r && r.models && Array.isArray(r.models.apis)) ? r.models : r;
-        if (!cancelled && realCatalog) setCatalog(realCatalog);
-      } catch (e) {
-        if (!cancelled) setErr(String(e?.message || e));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [reloadTick]);
-  // 换/删 API Key 后模型列表要同步:① 同文档广播 rpg-credentials-updated;
-  // ② 游戏台是独立页,改 key 在平台设置页 → 回到本页(focus/可见)时重拉。修 issue #22。
-  React.useEffect(() => {
-    const bump = () => setReloadTick((x) => x + 1);
-    const onVis = () => { if (!document.hidden) bump(); };
-    window.addEventListener("rpg-credentials-updated", bump);
-    window.addEventListener("focus", onVis);
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      window.removeEventListener("rpg-credentials-updated", bump);
-      window.removeEventListener("focus", onVis);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, []);
-
-  // 把 catalog 扁平化为可选模型列表（只显示 enabled 的）
-  // task 42: 注入 health 状态(ok/err/untested),picker 灰掉 err 项防止用户选 404 模型
-  const flat = [];
-  const apis = (catalog && Array.isArray(catalog.apis)) ? catalog.apis : [];
-  apis.forEach((api) => {
-    if (api && api.enabled === false) return;
-    // BYOK：只显示用户自己配过 key 的 provider（后端按当前用户算 has_credential）。
-    // 否则会把全局默认菜单(Claude/GPT 等用户没 key 的)整个摊开,选了也用不了。
-    if (api && api.has_credential === false) return;
-    const mods = api.models || [];
-    mods.forEach((m) => {
-      // 游戏内是聊天/GM 模型切换器,按 category 排除 embedding(RAG)模型——它们不能用于对话。
-      if (m && m.enabled !== false && !(m.capabilities || []).includes("embedding")) {
-        // 价格 & context 来自 m.pricing（后端 model_probe 注入）
-        const pricing = m.pricing || {};
-        const priceIn = pricing.input != null ? pricing.input : null;
-        const priceOut = pricing.output != null ? pricing.output : null;
-        const ctxRaw = pricing.context != null ? pricing.context : null;
-
-        // 格式化 context window：>= 1M → "1M"，>= 1K → "xxxK"
-        let ctxLabel = null;
-        if (ctxRaw != null && ctxRaw > 0) {
-          if (ctxRaw >= 1000000) ctxLabel = `${Math.round(ctxRaw / 1000000)}M`;
-          else if (ctxRaw >= 1000) ctxLabel = `${Math.round(ctxRaw / 1000)}K`;
-          else ctxLabel = String(ctxRaw);
-        }
-
-        // 格式化价格行："$X / $Y per M" 或 "免费"
-        let priceLabel = null;
-        if (priceIn != null && priceOut != null) {
-          if (priceIn === 0 && priceOut === 0) {
-            priceLabel = t('game.composer.model_price_free');
-          } else {
-            priceLabel = `$${priceIn.toFixed(2)} / $${priceOut.toFixed(2)} per M`;
-          }
-        }
-
-        flat.push({
-          id: m.id,
-          real_name: m.real_name || m.id,
-          label: m.display_name || m.real_name || m.id,
-          api_id: api.id,
-          api_label: api.display_name || api.id,
-          desc: (m.capabilities || []).slice(0, 3).join(" · "),
-          health: m.health || "untested",
-          health_error: m.health_error || "",
-          health_latency_ms: m.health_latency_ms,
-          priceLabel,
-          ctxLabel,
-        });
-      }
-    });
-  });
-  // 排序:可用优先,err 沉底
-  flat.sort((a, b) => {
-    const order = { ok: 0, untested: 1, degraded: 2, err: 3 };
-    return (order[a.health] ?? 4) - (order[b.health] ?? 4);
-  });
-
-  // 选中态必须与底部标签(_currentModelLabel)同源,否则会"勾在 A、底部显示 B"。
-  // 优先级:current(localModel,点击后乐观更新) > 存档 session_model > catalog.selected > gameState.app。
-  const _sessionModel = gameState && gameState.session_model;
-  const selected = (catalog && catalog.selected) || {};
-  let selectedKey = "";
-  if (current) {
-    const hit = flat.find((m) => m.id === current || m.real_name === current);
-    if (hit) selectedKey = `${hit.api_id}::${hit.real_name}`;
-  }
-  if (!selectedKey) {
-    if (_sessionModel && _sessionModel.api_id && _sessionModel.model_id) {
-      selectedKey = `${_sessionModel.api_id}::${_sessionModel.model_id}`;
-    } else if (selected.api_id && selected.model_id) {
-      selectedKey = `${selected.api_id}::${selected.model_id}`;
-    } else if (gameState && gameState.app) {
-      selectedKey = `${gameState.app.api_id || ""}::${gameState.app.model_real_name || ""}`;
-    }
-  }
-
-  const pickModel = async (item) => {
-    // M5: 记录调用前的选中态，失败时回滚
-    const prevSelectedKey = selectedKey;
-    setBusy(true); setErr("");
-    // A1: 游戏内 picker 带 save_id → 存档级切换，不动全局 catalog
-    const isSaveScope = saveId != null;
-    try {
-      const r = await window.api.models.select({
-        api_id: item.api_id,
-        model_id: item.real_name,
-        ...(isSaveScope ? { save_id: saveId } : {}),
-      });
-      if (r && r.ok === false) throw new Error(r.error || r.detail || t('game.composer.model_switch_failed'));
-      if (isSaveScope) {
-        window.__apiToast?.(t('game.composer.model_switched_save', { label: item.label }), { kind: "ok", duration: 2800 });
-      } else {
-        window.__apiToast?.(t('game.composer.model_switched', { label: item.label }), { kind: "ok", duration: 1800 });
-      }
-      // Bug fix: 存档级切换也要刷新当前 tab gameState，让底部标签立刻看到新模型。
-      // game-state-refresh 是 same-tab CustomEvent，不跨 tab，不干扰其他存档。
-      try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
-      onPick && onPick(item.id);
-    } catch (e) {
-      const msg = String(e?.message || e);
-      setErr(msg);
-      // M5: 尝试触发带重试按钮的 toast，回退到普通 danger toast
-      if (window.__apiToast) {
-        window.__apiToast(t('game.composer.model_switch_failed'), {
-          kind: "danger",
-          detail: msg,
-          action: { label: t('game.composer.retry'), onClick: () => pickModel(item) },
-        });
-      }
-    } finally {
-      setBusy(false);
-    }
+  // AgentModelPicker 选中变化:① 回填 selectedKey 给 EffortSection;② 通知父组件刷新底部标签。
+  const handlePicked = (apiId, modelReal) => {
+    if (!apiId || !modelReal) return;
+    setSelectedKey(`${apiId}::${modelReal}`);
+    // 存档级切换也要刷新当前 tab gameState,让底部标签立刻看到新模型。
+    try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
+    onPick && onPick(modelReal);
   };
-
-  // task 141: VS Code 风搜索框 — 输入 filter 模型 label / real_name / api_label
-  const [query, setQuery] = useStateC("");
-  const searchRef = useRefC(null);
-  React.useEffect(() => {
-    // popover 打开后自动 focus 到搜索框
-    setTimeout(() => { try { searchRef.current?.focus(); } catch (_) {} }, 30);
-  }, []);
-  const _q = query.trim().toLowerCase();
-  const filtered = _q ? flat.filter((m) => {
-    const hay = `${m.label} ${m.real_name} ${m.api_label} ${m.id}`.toLowerCase();
-    return hay.includes(_q);
-  }) : flat;
 
   return (
     <div ref={menuRef} className={`gc-menu gc-pop-menu ${align === "right" ? "gc-menu-right" : ""}`}>
-      <div className="gc-menu-head" style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 6, paddingTop: 10, paddingBottom: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Icon name="sparkle" size={12} /><span>{t('game.composer.model_placeholder')}</span>
-          {busy ? <span className="muted-2" style={{marginLeft: "auto", fontSize: 11}}>{t('game.composer.model_switching')}</span> : null}
-        </div>
-        <input
-          ref={searchRef}
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索模型…"
-          style={{
-            width: "100%", boxSizing: "border-box",
-            padding: "5px 10px",
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid var(--line-soft)",
-            borderRadius: 6,
-            color: "var(--text)",
-            fontSize: 12.5,
-            outline: "none",
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && query) { e.stopPropagation(); setQuery(""); }
-          }}
-        />
+      <div className="gc-menu-head" style={{ display: "flex", alignItems: "center", gap: 6, paddingTop: 10, paddingBottom: 8 }}>
+        <Icon name="sparkle" size={12} /><span>{t('game.composer.model_placeholder')}</span>
       </div>
-      {err ? <div className="muted-2" style={{padding: "6px 10px", fontSize: 11.5, color: "var(--danger)"}}>{err}</div> : null}
-      <ul className="gc-pop-list">
-        {filtered.length === 0 && (
-          <li><div style={{padding: "8px 10px", fontSize: 12, color: "var(--muted)"}}>
-            {_q ? `没有匹配「${query}」的模型` : t('game.composer.model_none')}
-          </div></li>
-        )}
-        {filtered.map((m) => {
-          const key = `${m.api_id}::${m.real_name}`;
-          const active = key === selectedKey;
-          const unavailable = m.health === "err";
-          // M1: degraded → 橙色
-          const dotColor = m.health === "ok" ? "var(--ok)"
-            : m.health === "degraded" ? "#e89b3a"
-            : m.health === "err" ? "var(--danger)"
-            : "var(--muted)";
-          const dotTip = m.health === "ok" ? `ok · ${m.health_latency_ms}ms`
-            : m.health === "degraded" ? `degraded · ${m.health_latency_ms != null ? m.health_latency_ms + "ms" : "high latency"}`
-            : m.health === "err" ? `unreachable · ${(m.health_error || "").slice(0, 80)}`
-            : "untested";
-          return (
-            <li key={key}>
-              <button
-                onClick={() => !busy && !unavailable && pickModel(m)}
-                className={active ? "active" : ""}
-                disabled={busy || unavailable}
-                title={unavailable ? `unreachable:${(m.health_error || "").slice(0, 120)}` : undefined}
-                style={unavailable ? { opacity: 0.45 } : undefined}
-              >
-                <div>
-                  <span
-                    className="dot"
-                    style={{display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: dotColor, marginRight: 6, verticalAlign: "middle"}}
-                    title={dotTip}
-                  />
-                  <strong>{m.label}</strong>
-                  <span className="muted-2 mono" style={{marginLeft: 6, fontSize: 11}}>{m.api_label}</span>
-                  {unavailable && (
-                    <span className="muted-2" style={{marginLeft: 6, fontSize: 10.5, color: "var(--danger)"}}>unreachable</span>
-                  )}
-                </div>
-                {(m.desc || m.priceLabel || m.ctxLabel) ? (
-                  <span className="muted" style={{fontSize: 12}}>
-                    {m.desc || null}
-                    {m.priceLabel ? (
-                      <span style={{marginLeft: m.desc ? 6 : 0, opacity: 0.85}}>{m.priceLabel}</span>
-                    ) : null}
-                    {m.ctxLabel ? (
-                      <span style={{marginLeft: (m.desc || m.priceLabel) ? 6 : 0, opacity: 0.7}}>ctx {m.ctxLabel}</span>
-                    ) : null}
-                  </span>
-                ) : null}
-                {active && <Icon name="check" size={14} style={{color: "var(--accent)"}} />}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      {/* 统一规范组件:模型池 = 已配 key 的 provider 真实模型;health/价格;选中即 /api/models/select。
+          persistShape="models_select" + saveId → 有存档时存档级切换,否则改全局 gm 偏好。 */}
+      <AgentModelPicker
+        prefPrefix="gm"
+        persistShape="models_select"
+        saveId={saveId}
+        variant="popover"
+        showHealth
+        showPricing
+        onChange={handlePicked}
+      />
       {/* task 141: Effort 段 — 每个模型独立配置 thinking budget 档位 */}
       <EffortSection selectedKey={selectedKey} />
     </div>

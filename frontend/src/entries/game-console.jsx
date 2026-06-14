@@ -32,7 +32,6 @@ import { safeUUID } from '../lib/crypto-safe.js';
 import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack, RunSteps, GameSettingsModal } from '../game-app.jsx';
 import { Composer, ConfirmStrip } from '../game-composer.jsx';
 import { RightPanel, PANEL_TABS } from '../game-panels.jsx';
-import ModelPicker from '../components/ModelPicker.jsx';
 // AGE-02: splash gate
 import AdultSplash from '../components/AdultSplash.jsx';
 import { ErrorBoundary } from '../components/ErrorBoundary.jsx';
@@ -1577,50 +1576,8 @@ function App() {
         </>}
         {/* config_card hard 拦截弹窗(mode model_not_configured):ConfirmStrip onHardConfig 触发 */}
         <ModelConfigInterceptModal open={!!hardConfigItem} item={hardConfigItem} onResolve={onHardResolve} onCancel={onHardCancel} />
-        {/* Wave 11-D: GM 模型选择 — 改回 Composer 内置 ModelPopover (下拉) 用法,
-            外层这个 ModelPicker 全屏 modal 禁用 (showModel={false} 已让 Composer 里
-            的 popover 失效,这块也 dead code)。task 141 修: showModel pass through,
-            走下拉,删全屏 modal。 */}
-        {false && (() => {
-          const _MP = ModelPicker;
-          const _currentModelId = (game && game.app && (game.app.model_real_name || game.app.model)) || '';
-          const _handleModelChange = async (modelId, _provider) => {
-            try {
-              if (window.api && window.api.models && window.api.models.select) {
-                // 找到 provider api_id 对应关系
-                const cat = await (window.api.models.catalog ? window.api.models.catalog() : Promise.resolve({ models: [] }));
-                const info = cat && Array.isArray(cat.models) ? cat.models.find(m => m.id === modelId) : null;
-                const apiId = info ? String(info.provider) : '';
-                await window.api.models.select({ api_id: apiId, model_id: modelId });
-                window.__apiToast?.(`GM 模型 → ${modelId}`, { kind: 'ok', duration: 1500 });
-              }
-            } catch (e) { window.__apiToast?.('切换失败', { kind: 'danger', detail: e && e.message }); }
-            setShowModel(false);
-          };
-          return (
-            <div
-              style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              onClick={() => setShowModel(false)}
-            >
-              <div
-                onClick={e => e.stopPropagation()}
-                style={{ width: 'min(620px, 94vw)', maxHeight: '82vh', display: 'flex', flexDirection: 'column', borderRadius: 'var(--r-3,8px)', overflow: 'hidden', boxShadow: 'var(--shadow-3)' }}
-              >
-                <div style={{ background: 'var(--panel,#211f1d)', borderBottom: '1px solid var(--line-soft,#2a2724)', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <strong style={{ fontFamily: 'var(--font-serif)', fontSize: 14, letterSpacing: '0.03em' }}>选择 GM 模型</strong>
-                  <button className="iconbtn" onClick={() => setShowModel(false)} title="关闭" style={{ border: 0, background: 'transparent', color: 'var(--muted)', cursor: 'pointer', padding: '4px 8px', borderRadius: 4 }}>✕</button>
-                </div>
-                <div style={{ overflow: 'auto', flex: 1 }}>
-                  <_MP
-                    value={_currentModelId}
-                    onChange={_handleModelChange}
-                    filter={{ capability: 'streaming' }}
-                  />
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        {/* GM 模型选择走 Composer 内置 ModelPopover(下拉,基于统一规范组件 AgentModelPicker)。
+            旧的全屏 ModelPicker modal(dead code)已删除。 */}
         {mountStage >= 1 ? <ChatArea
           history={
             // G6: 存档已加载但 player 还未 setup,显示"等待开场..."占位而非空白

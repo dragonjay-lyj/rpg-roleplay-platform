@@ -6,6 +6,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Icon } from '../icons.jsx';
 import { usePlatformData, useReactiveUser } from '../../platform-app.jsx';
+// 模型选择器全站唯一规范组件(用户强制指令:不再自造 <select>)。Cloudscape 已在 platform 入口打包,
+// 移动端复用同一实现,保证「已配 key 过滤 / capability 过滤 / 自定义手填 / dict 落库 / 跟随主 GM」完全一致。
+import AgentModelPicker from '../../components/AgentModelPicker.jsx';
 
 /* ── 工具函数 ────────────────────────────────────────────────────── */
 const API_ID_ALIASES = {
@@ -581,297 +584,67 @@ function ModelParamsSection() {
 /* ────────────────────────────────────────────────────────────────── */
 /* SECTION: 模块分配 (modules)                                         */
 /* ────────────────────────────────────────────────────────────────── */
+// 模块清单与桌面端同构。每行用统一规范组件 AgentModelPicker(不再自造 <select>)。
+//   flat 模块走 prefPrefix(<prefPrefix>.api_id / .model_real_name);
+//   dict 模块(sub_agent / console)走 persistShape="dict" + dictKey={api_id, model};
+//   embedder / image_gen allowInherit=false(必须自己选);其它可「跟随主 GM」。
 const MODULES = [
-  { id:'gm',           label:'主 GM 默认模型',    shape:'flat', apiKey:'gm.api_id',                      modelKey:'gm.model_real_name',                      tip:'玩家对话主模型' },
-  { id:'sub_agent',    label:'上下文子代理',       shape:'dict', overrideKey:'sub_agent_model_override',  tip:'整理意图+检索;空=跟主 GM' },
-  { id:'set_parser',   label:'指令解析代理',       shape:'flat', apiKey:'set_parser.api_id',              modelKey:'set_parser.model_real_name',               tip:'/set 命令自然语言解析' },
-  { id:'console',      label:'控制台助手',         shape:'dict', overrideKey:'console_assistant_model_override', tip:'侧栏控制台;空=跟主 GM' },
-  { id:'extractor',    label:'叙事提取器',         shape:'flat', apiKey:'extractor.api_id',               modelKey:'extractor.model_real_name',                tip:'GM 叙事二次解析(两步 GM)' },
-  { id:'card_gen',     label:'角色卡生成器',       shape:'flat', apiKey:'character_card_generator.api_id',modelKey:'character_card_generator.model_real_name', tip:'创意工具:生成/微调角色卡' },
-  { id:'card_import',  label:'AI 整理卡字段',      shape:'flat', apiKey:'card_import.api_id',             modelKey:'card_import.model_real_name',              tip:'导入酒馆卡时 LLM 整理字段;空=跟主 GM' },
-  { id:'critic',       label:'一致性评分',         shape:'flat', apiKey:'critic.api_id',                  modelKey:'critic.model_real_name',                   tip:'角色卡生成的一致性评分子代理' },
-  { id:'verifier',     label:'接受条件验证',       shape:'flat', apiKey:'acceptance_verifier.api_id',     modelKey:'acceptance_verifier.model_real_name',      tip:'GM 输出是否满足 acceptance 条件' },
-  { id:'phase_digest', label:'阶段浓缩 (compact)', shape:'flat', apiKey:'phase_digest.api_id',            modelKey:'phase_digest.model_real_name',             tip:'长局历史按阶段浓缩成摘要' },
-  { id:'black_swan',   label:'黑天鹅事件代理',     shape:'flat', apiKey:'black_swan_agent.api_id',        modelKey:'black_swan_agent.model_real_name',         tip:'主动触发世界突发事件' },
-  { id:'agent',        label:'通用子代理兜底',     shape:'flat', apiKey:'agent.api_id',                   modelKey:'agent.model_real_name',                    tip:'未单独配置模型的子代理兜底' },
-  { id:'embedder',     label:'向量嵌入 (RAG)',      shape:'flat', apiKey:'embed.api_id',                   modelKey:'embed.model_real_name',                    tip:'RAG 召回用 embedding 模型', capsFilter:['embedding'], allowInherit:false },
+  { id:'gm',           label:'主 GM 默认模型',    prefPrefix:'gm',                       tip:'玩家对话主模型' },
+  { id:'sub_agent',    label:'上下文子代理',       persistShape:'dict', dictKey:'sub_agent_model_override', inherit:true, tip:'整理意图+检索;跟随主 GM' },
+  { id:'set_parser',   label:'指令解析代理',       prefPrefix:'set_parser',               inherit:true, tip:'/set 命令自然语言解析' },
+  { id:'console',      label:'控制台助手',         persistShape:'dict', dictKey:'console_assistant_model_override', inherit:true, tip:'侧栏控制台;跟随主 GM' },
+  { id:'extractor',    label:'叙事提取器',         prefPrefix:'extractor',                inherit:true, tip:'GM 叙事二次解析(两步 GM)' },
+  { id:'card_gen',     label:'角色卡生成器',       prefPrefix:'character_card_generator', inherit:true, tip:'创意工具:生成/微调角色卡' },
+  { id:'card_import',  label:'AI 整理卡字段',      prefPrefix:'card_import',              inherit:true, tip:'导入酒馆卡时 LLM 整理字段;跟随主 GM' },
+  { id:'critic',       label:'一致性评分',         prefPrefix:'critic',                   inherit:true, tip:'角色卡生成的一致性评分子代理' },
+  { id:'verifier',     label:'接受条件验证',       prefPrefix:'acceptance_verifier',      inherit:true, tip:'GM 输出是否满足 acceptance 条件' },
+  { id:'phase_digest', label:'阶段浓缩 (compact)', prefPrefix:'phase_digest',             inherit:true, tip:'长局历史按阶段浓缩成摘要' },
+  { id:'black_swan',   label:'黑天鹅事件代理',     prefPrefix:'black_swan_agent',         inherit:true, tip:'主动触发世界突发事件' },
+  { id:'agent',        label:'通用子代理兜底',     prefPrefix:'agent',                    inherit:true, tip:'未单独配置模型的子代理兜底' },
+  { id:'embedder',     label:'向量嵌入 (RAG)',      prefPrefix:'embed',  capabilityFilter:'embedding', inherit:false, defaultModel:'text-embedding-004', preferProvider:'vertex_ai', tip:'RAG 召回用 embedding 模型' },
+  { id:'image_gen',    label:'图像生成模型',       prefPrefix:'image_gen', capabilityFilter:'image_gen', inherit:false, fallbackPrefix:'gm', tip:'生图功能默认 provider/模型;需配 BYOK key' },
 ];
 
 function ModuleModelsSection({ nav }) {
-  const [prefs, setPrefs] = useState({});
-  const [catalog, setCatalog] = useState({ apis:[], selected:null });
-  const [credIds, setCredIds] = useState(new Set());
-  const [saving, setSaving] = useState(null);
+  // embedder 平台兜底状态:仅 admin/vip 显示平台 vertex embedding(后端已 _is_admin gate)。
   const [embedStatus, setEmbedStatus] = useState(null);
-  // 「自定义模型」态:目录里没有用户的模型时,允许手填(provider + model 名),与桌面端/AgentModelPicker 一致。
-  const [customDraft, setCustomDraft] = useState({});
-
-  const reload = useCallback(async () => {
-    try {
-      const [profile, models, creds, es] = await Promise.all([
-        window.api.account.profile(),
-        window.api.models.list().catch(() => ({})),
-        window.api.credentials.list().catch(() => ({ items:[] })),
-        fetch('/api/me/embedder/status', { credentials:'include' }).then(r => r.json()).catch(() => null),
-      ]);
-      setPrefs((profile && profile.preferences) || {});
-      const ids = new Set();
-      for (const c of (creds?.items || creds?.credentials || [])) {
-        if (c.enabled===false) continue;
-        if (!(c.has_credential || c.has_key || c.key_hint)) continue;
-        ids.add(catId(credId(c.api_id || c.id)));
-      }
-      setCredIds(ids);
-      const apis = models?.models?.apis ?? (Array.isArray(models?.apis) ? models.apis : []) ?? [];
-      setCatalog({ apis: Array.isArray(apis) ? apis : [], selected: models?.models?.selected ?? models?.selected ?? null });
-      setEmbedStatus(es?.ok ? es : null);
-    } catch (_) {}
+  useEffect(() => {
+    fetch('/api/me/embedder/status', { credentials:'include' })
+      .then(r => r.json()).then(es => setEmbedStatus(es?.ok ? es : null)).catch(() => {});
   }, []);
-
-  useEffect(() => { reload(); }, [reload]);
-
-  const flatModels = useMemo(() => {
-    const out = [];
-    for (const api of (catalog.apis || [])) {
-      const aid = catId(credId(api.api_id || api.id));
-      if (!credIds.has(aid)) continue;
-      for (const m of (api.models || api.entries || [])) {
-        if (m.enabled===false) continue;
-        out.push({ api_id: aid, real_name: m.real_name || m.id, display: m.display_name || m.real_name || m.id, capabilities: m.capabilities || m.caps || [] });
-      }
-    }
-    return out;
-  }, [catalog, credIds]);
-
-  const modelsFor = (mod) => {
-    const need = Array.isArray(mod.capsFilter) ? mod.capsFilter : null;
-    if (!need) return flatModels.filter(m => !(m.capabilities||[]).includes('embedding'));
-    return flatModels.filter(m => need.every(c => (m.capabilities||[]).includes(c)));
-  };
-
-  const currentFor = (mod) => {
-    if (mod.shape==='dict') {
-      const v = prefs[mod.overrideKey];
-      if (v && typeof v==='object' && (v.api_id || v.model)) {
-        const api_id = catId(credId(v.api_id || ''));
-        const real_name = v.model;
-        if (flatModels.some(x => x.api_id===api_id && x.real_name===real_name)) return { api_id, real_name };
-      }
-      return null;
-    }
-    if (mod.id==='gm') {
-      const a = catId(credId(prefs['gm.api_id'] || ''));
-      const m = prefs['gm.model_real_name'];
-      if (a && m && flatModels.some(x => x.api_id===a && x.real_name===m)) return { api_id:a, real_name:m };
-      if (flatModels.length) return { api_id:flatModels[0].api_id, real_name:flatModels[0].real_name };
-      return null;
-    }
-    const a = prefs[mod.apiKey]; const m = prefs[mod.modelKey];
-    if (a || m) {
-      const api_id = catId(credId(a||'')); const real_name = m;
-      if (flatModels.some(x => x.api_id===api_id && x.real_name===real_name)) return { api_id, real_name };
-    }
-    if (mod.allowInherit===false) return null;
-    return null;
-  };
-
-  const handleChange = async (mod, value) => {
-    setSaving(mod.id);
-    try {
-      if (value==='__inherit__') {
-        if (mod.shape==='dict') await window.api.account.preferences({ [mod.overrideKey]: null });
-        else { await window.api.account.preferences({ [mod.apiKey]: null }); await window.api.account.preferences({ [mod.modelKey]: null }); }
-      } else {
-        const sep = value.indexOf('/');
-        if (sep<0) return;
-        const api_id = catId(credId(value.slice(0,sep)));
-        const real_name = value.slice(sep+1);
-        if (mod.shape==='dict') {
-          await window.api.account.preferences({ [mod.overrideKey]: { api_id, model: real_name } });
-        } else {
-          await window.api.account.preferences({ [mod.apiKey]: api_id });
-          await window.api.account.preferences({ [mod.modelKey]: real_name });
-        }
-      }
-      await reload();
-      nav.toast(`${mod.label} 已保存`, 'ok', 'check');
-    } catch (e) {
-      nav.toast(`保存失败: ${e?.message||''}`, 'danger', 'warn');
-    } finally { setSaving(null); }
-  };
-
-  // 「自定义」可选 provider 列表:用户已配 key 的 provider(catalog 显示名 + 仅有凭据的自定义 API)。
-  const providerOptions = useMemo(() => {
-    const seen = new Set();
-    const out = [];
-    for (const a of (catalog.apis || [])) {
-      const id = catId(credId(a.api_id || a.id));
-      if (!id || !credIds.has(id) || seen.has(id)) continue;
-      seen.add(id);
-      out.push({ value: id, label: a.display_name || a.name || id });
-    }
-    for (const id of credIds) {
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      out.push({ value: id, label: id });
-    }
-    return out;
-  }, [catalog, credIds]);
-
-  const openCustom = (mod) => {
-    const cur = currentFor(mod);
-    const api_id = cur?.api_id || providerOptions[0]?.value || '';
-    setCustomDraft(d => ({ ...d, [mod.id]: { api_id, model: cur?.real_name || '' } }));
-  };
-  const closeCustom = (modId) => setCustomDraft(d => { const n = { ...d }; delete n[modId]; return n; });
-  // 自定义保存:复用 handleChange 的同一持久化路径(扁平双 key / dict {api_id, model})。
-  const saveCustom = async (mod, draft = customDraft[mod.id]) => {
-    const api_id = (draft?.api_id || '').trim();
-    const model = (draft?.model || '').trim();
-    if (!api_id || !model) return;
-    await handleChange(mod, `${api_id}/${model}`);
-    closeCustom(mod.id);
-  };
-
-  const resetAll = async () => {
-    setSaving('__all__');
-    const batch = {};
-    for (const m of MODULES) {
-      if (m.id==='gm') continue;
-      if (m.shape==='dict') batch[m.overrideKey] = null;
-      else { batch[m.apiKey]=null; batch[m.modelKey]=null; }
-    }
-    try {
-      await window.api.account.preferences(batch);
-      await reload();
-      nav.toast('已重置所有模块为跟随主 GM', 'ok', 'check');
-    } catch (e) { nav.toast('重置失败', 'danger', 'warn'); }
-    finally { setSaving(null); }
-  };
+  const platformVertexAllowed = !!(embedStatus && embedStatus.platform_fallback_available);
 
   return (
     <>
       <div className="pl-sec-note" style={{ marginBottom: 14 }}>
         每个子代理可单独指定模型——把贵的留给主 GM 叙事，把检索/抽取交给便宜快速的模型。
       </div>
-
-      <button className="pl-btn-ghost" style={{ marginBottom: 16, height: 40, fontSize: 13 }}
-        disabled={saving==='__all__'} onClick={resetAll}>
-        <Icon name="refresh" size={14} /> 重置全部为跟随主 GM
-      </button>
-
-      {MODULES.map(mod => {
-        const cur = currentFor(mod);
-        const isInherit = !cur && mod.id!=='gm' && mod.allowInherit!==false;
-        const visibleModels = modelsFor(mod);
-        const selectVal = (() => {
-          if (mod.shape==='dict') {
-            const v = prefs[mod.overrideKey];
-            return v && (v.api_id||v.model) ? `${catId(credId(v.api_id||''))}/${v.model||''}` : '__inherit__';
-          }
-          if (mod.id==='gm') return cur ? `${cur.api_id}/${cur.real_name}` : '';
-          return (prefs[mod.apiKey]||prefs[mod.modelKey]) ? `${catId(credId(prefs[mod.apiKey]||''))}/${prefs[mod.modelKey]||''}` : '__inherit__';
-        })();
-
-        return (
-          <div key={mod.id} className="pl-card" style={{ marginBottom: 10 }}>
-            <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:8, marginBottom: 10 }}>
-              <div>
-                <strong style={{ fontSize: 14 }}>{mod.label}</strong>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{mod.tip}</div>
-              </div>
-              {isInherit && (
-                <span className="pill" style={{ flexShrink:0, fontSize:10 }}>跟主 GM</span>
-              )}
-            </div>
-            {cur && (
-              <div style={{ fontSize: 11.5, color: 'var(--text-quiet)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
-                当前: {cur.api_id} · {cur.real_name}
-              </div>
-            )}
-            {mod.id==='embedder' && embedStatus && !embedStatus.user_configured && (
-              <div style={{ fontSize: 11, color: 'var(--warn)', marginBottom: 8, lineHeight: 1.5 }}>
-                ⚠ 未配置 embedding key，RAG 召回可能降级
-              </div>
-            )}
-            {(() => {
-              const CUSTOM = '__custom__';
-              const draft = customDraft[mod.id];
-              const knownVals = new Set(visibleModels.map(m => `${m.api_id}/${m.real_name}`));
-              // 已持久化但不在目录里的值 = 手填的自定义模型;打开行进入自定义态编辑。
-              const isCustomPersisted = !draft && selectVal!=='__inherit__' && !!selectVal && !knownVals.has(selectVal);
-              const inCustom = !!draft || isCustomPersisted;
-              return (
-                <>
-                  <select
-                    className="pl-input"
-                    value={inCustom ? CUSTOM : selectVal}
-                    disabled={saving===mod.id || saving==='__all__' || flatModels.length===0}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v===CUSTOM) { openCustom(mod); }
-                      else { closeCustom(mod.id); handleChange(mod, v); }
-                    }}
-                    style={{ fontSize: 13, height: 42 }}
-                  >
-                    {mod.id!=='gm' && mod.allowInherit!==false && (
-                      <option value="__inherit__">跟随主 GM</option>
-                    )}
-                    {selectVal && selectVal!=='__inherit__' && !knownVals.has(selectVal) && (
-                      <option value={selectVal}>{selectVal}（未在 catalog）</option>
-                    )}
-                    {visibleModels.map(m => (
-                      <option key={`${m.api_id}/${m.real_name}`} value={`${m.api_id}/${m.real_name}`}>
-                        {m.api_id} · {m.display}
-                      </option>
-                    ))}
-                    <option value={CUSTOM}>自定义…(手动填写模型名)</option>
-                  </select>
-                  {inCustom && (() => {
-                    const d = draft || { api_id: currentFor(mod)?.api_id || providerOptions[0]?.value || '', model: selectVal && selectVal!=='__inherit__' ? selectVal.slice(selectVal.indexOf('/')+1) : '' };
-                    const setD = (patch) => setCustomDraft(s => ({ ...s, [mod.id]: { ...d, ...patch } }));
-                    return (
-                      <div style={{ display:'grid', gap:8, marginTop:8 }}>
-                        <select
-                          className="pl-input"
-                          value={d.api_id}
-                          disabled={saving===mod.id || providerOptions.length===0}
-                          onChange={(e) => setD({ api_id: e.target.value })}
-                          style={{ fontSize: 13, height: 42 }}
-                        >
-                          {providerOptions.length===0 && <option value="">请先在 API 设置配置 key</option>}
-                          {providerOptions.map(o => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
-                        <div style={{ display:'grid', gridTemplateColumns:'minmax(0,1fr) auto', gap:8 }}>
-                          <input
-                            className="pl-input"
-                            value={d.model}
-                            placeholder="填写模型名,例如 gpt-4o-mini"
-                            disabled={saving===mod.id || !d.api_id}
-                            onChange={(e) => setD({ model: e.target.value })}
-                            style={{ fontSize: 13, height: 42 }}
-                          />
-                          <button
-                            className="pl-btn-primary"
-                            disabled={saving===mod.id || !d.api_id || !(d.model||'').trim()}
-                            onClick={() => saveCustom(mod, d)}
-                            style={{ height: 42, fontSize: 13 }}
-                          >
-                            保存
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </>
-              );
-            })()}
+      {MODULES.map(mod => (
+        <div key={mod.id} className="pl-card" style={{ marginBottom: 10 }}>
+          <div style={{ marginBottom: 10 }}>
+            <strong style={{ fontSize: 14 }}>{mod.label}</strong>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{mod.tip}</div>
           </div>
-        );
-      })}
-
+          <AgentModelPicker
+            prefPrefix={mod.prefPrefix}
+            persistShape={mod.persistShape || 'flat'}
+            dictKey={mod.dictKey || null}
+            capabilityFilter={mod.capabilityFilter || null}
+            allowInherit={!!mod.inherit}
+            defaultModel={mod.defaultModel || null}
+            preferProvider={mod.preferProvider || null}
+            fallbackPrefix={mod.fallbackPrefix || null}
+            platformVertexAllowed={mod.id === 'embedder' ? platformVertexAllowed : false}
+            variant="bare"
+            configHash="apis"
+          />
+          {mod.id==='embedder' && embedStatus && !embedStatus.user_configured && !platformVertexAllowed && (
+            <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 8, lineHeight: 1.5 }}>
+              未配置 embedding key，RAG 召回可能降级
+            </div>
+          )}
+        </div>
+      ))}
       <div style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.6, marginTop: 8 }}>
         切换 embedding 模型后，已嵌过的剧本需重新嵌入才会用新模型。
       </div>

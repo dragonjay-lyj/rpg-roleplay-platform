@@ -1483,7 +1483,7 @@ function TavernImportModal({ open, onClose, onConfirm }) {
                 <AgentModelPicker
                   prefPrefix="card_import"
                   variant="bare"
-                  defaultModel="gemini-3.5-flash"
+                  defaultModel={null}
                   configHash="settings-models"
                   persistOnMount
                 />

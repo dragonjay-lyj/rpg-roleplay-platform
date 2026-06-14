@@ -685,6 +685,40 @@ function UnifiedSearch({ open, onClose, setPage }) {
     return () => clearTimeout(t);
   }, [q]);
 
+  // 模型/Provider 搜索条目:登录用户读真实目录 /api/models(只列已配 key 的 provider,
+  // 与 AgentModelPicker 收敛行为一致),不再把 settings.jsx 的 MODELS_DATA 假目录
+  // (GPT-5.5/Claude Opus 4.7/35 条 OpenRouter 假模型名…)无条件塞进 Spotlight。
+  // 仅 ?demo=1 或匿名访客(设计预览)才回退 MODELS_DATA,与 settings.jsx 的 useMock 同闸。
+  const _IS_DEMO = new URLSearchParams(location.search).get('demo') === '1';
+  const _IS_ANON = !(window.RPG_AUTH && window.RPG_AUTH.authed);
+  const _useMockModels = _IS_DEMO || _IS_ANON;
+  const [modelCatalog, setModelCatalog] = useStatePL(null); // null=未加载;数组=真实 provider 目录
+  useEffectPL(() => {
+    if (_useMockModels) { setModelCatalog(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [models, creds] = await Promise.all([
+          window.api.models.list().catch(() => ({})),
+          window.api.credentials.list().catch(() => ({ items: [] })),
+        ]);
+        if (cancelled) return;
+        const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
+        // 只保留用户已配凭据的 provider(AgentPlatform→vertex_ai canonical,与 AgentModelPicker 一致)。
+        const credIds = new Set();
+        for (const c of (creds?.items || creds?.credentials || [])) {
+          if (c.enabled === false) continue;
+          if (!(c.has_credential || c.has_key || c.key_hint !== undefined)) continue;
+          const aid = (c.api_id || c.id || '').trim();
+          credIds.add(aid === 'AgentPlatform' ? 'vertex_ai' : aid);
+        }
+        const filtered = (Array.isArray(list) ? list : []).filter(a => credIds.has((a.api_id || a.id || '').trim()));
+        setModelCatalog(filtered);
+      } catch (_) { if (!cancelled) setModelCatalog([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [_useMockModels]);
+
   const platform = usePlatformData();  // task 45
 
   const pages = [
@@ -771,11 +805,27 @@ function UnifiedSearch({ open, onClose, setPage }) {
     }));
   });
 
+  // 登录用户用真实目录(modelCatalog,只含已配 key 的 provider);demo/anon 才用 MODELS_DATA。
+  // 真实条目字段(/api/models):provider 用 api_id/display_name/base_url/models[]{real_name,display_name}。
+  const _modelSrc = _useMockModels
+    ? MODELS_DATA.map(a => ({
+        id: a.id, name: a.name, base_url: a.base_url,
+        models: (a.models || []).map(m => ({ real_name: m.real_name, display: m.display })),
+      }))
+    : (Array.isArray(modelCatalog) ? modelCatalog.map(a => ({
+        id: a.api_id || a.id, name: a.display_name || a.name || (a.api_id || a.id),
+        base_url: a.base_url || '',
+        models: (a.models || a.entries || []).map(m => ({
+          real_name: m.real_name || m.id,
+          display: m.display_name || m.real_name || m.id,
+        })),
+      })) : []);
+
   const models = [];
-  MODELS_DATA.forEach(api => {
-    api.models.slice(0, 3).forEach(m => {
+  _modelSrc.forEach(api => {
+    (api.models || []).slice(0, 3).forEach(m => {
       models.push({
-        id: "m-" + m.id, label: m.display, kind: "model",
+        id: "m-" + api.id + "-" + m.real_name, label: m.display, kind: "model",
         sub: `${api.name} · ${m.real_name}`,
         icon: "sparkle", keywords: m.real_name + " " + api.name,
         hash: "settings",
@@ -783,9 +833,9 @@ function UnifiedSearch({ open, onClose, setPage }) {
     });
   });
 
-  const apis = MODELS_DATA.map(a => ({
+  const apis = _modelSrc.map(a => ({
     id: "api-" + a.id, label: a.name, kind: "api",
-    sub: `${a.models.length} 模型 · ${a.base_url}`,
+    sub: `${(a.models || []).length} 模型${a.base_url ? ' · ' + a.base_url : ''}`,
     icon: "braces", keywords: a.id,
     hash: "settings",
   }));

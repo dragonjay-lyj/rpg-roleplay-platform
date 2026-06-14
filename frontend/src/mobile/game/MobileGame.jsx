@@ -11,6 +11,7 @@ import React from 'react';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Icon } from '../icons.jsx';
 import { MobilePanel, MOBILE_PANEL_TABS } from './panels.jsx';
+import AgentModelPicker from '../../components/AgentModelPicker.jsx';
 
 const SLASH_GROUPS = [
   { title: '查询', items: [
@@ -282,60 +283,35 @@ function SheetHost({ sheet, onClose, gc, msgActions }) {
   );
 }
 
+/* ModelSheetBody — 游戏内「对话模型」切换。
+   重构:不再自造第二套选择器(自 fetch /api/models + 自过滤 + 直调 models.select),
+   而是复用全站唯一规范组件 AgentModelPicker(与桌面 game-composer ModelPopover 同路径:
+   persistShape="models_select" + saveId → 有存档时存档级切换,否则改全局 gm 偏好)。
+   它自带:已配 key 过滤 / cheap 档 / health / pricing / 自定义手填 等收敛行为。
+   onChange(apiId, modelReal):① 回填 gc.model 供底部 chip 标签刷新;② 广播 game-state-refresh;
+   ③ 关闭 sheet(与桌面 onPick→toggleModel 一致)。 */
 function ModelSheetBody({ gc, onClose }) {
-  const [models, setModels] = useState(null);
-  useEffect(() => {
-    let dead = false;
-    (async () => {
-      try {
-        const r = await window.api.models.list();
-        // /api/models 返回 {ok, models:{apis:[...], selected:{...}}}
-        const apis = (r && r.models && Array.isArray(r.models.apis))
-          ? r.models.apis
-          : (Array.isArray(r?.apis) ? r.apis : []);
-        const flat = [];
-        for (const api of apis) {
-          if (api.enabled === false) continue;
-          if (api.has_credential === false) continue;
-          const apiId = api.id || api.api_id || '';
-          const mods = Array.isArray(api.models) ? api.models : [];
-          for (const m of mods) {
-            if (m.enabled === false) continue;
-            // 跳过 embedding 等非聊天模型
-            const caps = Array.isArray(m.capabilities) ? m.capabilities : [];
-            if (caps.includes('embedding')) continue;
-            flat.push({ ...m, api_id: apiId, label: m.display_name || m.real_name || m.id });
-          }
-        }
-        if (!dead) setModels(flat);
-      } catch (_) { if (!dead) setModels([]); }
-    })();
-    return () => { dead = true; };
-  }, []);
-  if (models === null) return <div className="pl-empty" style={{ padding: 20 }}>加载模型…</div>;
-  if (!models.length) return <div className="pl-empty" style={{ padding: 20 }}>没有可用模型,请先在「设置 · 模型」配置 API Key。</div>;
-  const pick = async (m) => {
-    try {
-      await window.api.models.select({ api_id: m.api_id || m.provider, model_id: m.real_name || m.model_id || m.id });
-      gc.setModel && gc.setModel({ id: m.real_name || m.id, api_id: m.api_id || m.provider, label: m.label || m.real_name });
-      window.__apiToast?.(`GM 模型 → ${m.label || m.real_name || m.id}`, { kind: 'ok', duration: 1500 });
-    } catch (e) { window.__apiToast?.('切换失败', { kind: 'danger', detail: e?.message }); }
+  // saveId 解析与桌面端 Composer 同源:优先 activeSave.id,回退 game._raw.save_id。
+  const saveId = (gc.activeSave && gc.activeSave.id)
+    || (gc.game && gc.game._raw && gc.game._raw.save_id)
+    || null;
+  const onPicked = (apiId, modelReal) => {
+    if (!apiId || !modelReal) return;
+    gc.setModel && gc.setModel({ id: modelReal, api_id: apiId, label: modelReal });
+    try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
+    window.__apiToast?.(`GM 模型 → ${modelReal}`, { kind: 'ok', duration: 1500 });
     onClose();
   };
-  const curId = gc.model && (gc.model.id || gc.model.model_id);
   return (
-    <div className="sheet-list">
-      {models.map((m, i) => {
-        const id = m.real_name || m.id;
-        return (
-          <button key={i} className={`sheet-item ${id === curId ? 'active' : ''}`} onClick={() => pick(m)}>
-            <span className="sheet-ico"><Icon name="sparkle" size={18} /></span>
-            <span className="sheet-tx"><span className="vendor">{m.api_id || m.provider || ''}</span><strong>{m.label || id}</strong>{m.desc && <span>{m.desc}</span>}</span>
-            {id === curId && <span className="sheet-check"><Icon name="check" size={18} /></span>}
-          </button>
-        );
-      })}
-    </div>
+    <AgentModelPicker
+      prefPrefix="gm"
+      persistShape="models_select"
+      saveId={saveId}
+      variant="popover"
+      showHealth
+      showPricing
+      onChange={onPicked}
+    />
   );
 }
 

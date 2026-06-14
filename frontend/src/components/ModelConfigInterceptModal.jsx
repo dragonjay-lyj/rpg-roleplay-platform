@@ -4,23 +4,139 @@ import CSBox from '@cloudscape-design/components/box';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSButton from '@cloudscape-design/components/button';
 import CSAlert from '@cloudscape-design/components/alert';
+import CSFormField from '@cloudscape-design/components/form-field';
+import CSSelect from '@cloudscape-design/components/select';
 import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
 import AgentModelPicker from './AgentModelPicker.jsx';
-import { EditApiModal } from '../pages/settings.jsx';
+import { EditApiModal, ProviderCard, PROVIDERS_CONFIG, normalizeApiId } from '../pages/settings.jsx';
 
 /* config_card 能力 → 前端配置映射(后端契约里的 capability 字段)。
    一处定义,ConfirmStrip 的内联卡片与本拦截弹窗共用,避免两份各写一套。
-     prefPrefix      : user_preferences 命名空间(后端各 agent resolve 读同名 key)
-     capabilityFilter: AgentModelPicker 只展示含此 capability 的模型(null=不过滤,LLM)
-     label           : 给用户看的能力名(中文) */
+     prefPrefix       : user_preferences 命名空间(后端各 agent resolve 读同名 key)
+     capabilityFilter : AgentModelPicker 只展示含此 capability 的模型(null=不过滤,LLM)
+     label            : 给用户看的能力名(中文)
+     defaultProvider  : 该能力下「补 Key」时默认选中的 provider(用户可改) */
 export const CAP_CONFIG = {
-  image:     { prefPrefix: 'image_gen', capabilityFilter: 'image_gen', label: '生图' },
-  embedding: { prefPrefix: 'embed',     capabilityFilter: 'embedding', label: '向量检索' },
-  llm:       { prefPrefix: 'gm',        capabilityFilter: null,        label: '对话' },
+  image:     { prefPrefix: 'image_gen', capabilityFilter: 'image_gen', label: '生图',     defaultProvider: 'dashscope' },
+  embedding: { prefPrefix: 'embed',     capabilityFilter: 'embedding', label: '向量检索', defaultProvider: 'openai' },
+  llm:       { prefPrefix: 'gm',        capabilityFilter: null,        label: '对话',     defaultProvider: 'deepseek' },
 };
 
 export function capConfig(capability) {
   return CAP_CONFIG[capability] || CAP_CONFIG.llm;
+}
+
+/* InlineProviderConfig —— 就地填 API Key 的内联面板。
+   复用设置页的 ProviderCard(单 provider 的 api_key + base_url 输入,保存走
+   window.api.credentials.set → 自动广播 rpg-credentials-updated)。
+   provider 用一个小 <select> 让用户切换;ProviderCard 只是受控展示,凭据读写都在这里。
+
+   props:
+     capability    : config_card 的能力(决定默认 provider)
+     defaultApiId  : 优先选中的 provider(通常来自 item.api_id)
+     onSaved?      : (providerId) => void  保存成功后回调(父组件据此点亮「继续」) */
+export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', onSaved = null }) {
+  const { useState, useEffect, useMemo } = React;
+  const cap = capConfig(capability);
+  // 可选 provider:沿用设置页同一份 PROVIDERS_CONFIG。
+  // 排除 agent_platform(走 SA JSON 上传,不是单 key 输入,内联不便)与编辑弹窗隐藏项;
+  // 用户需要 Vertex SA 时仍可走「去模型设置」。
+  const providers = useMemo(
+    () => PROVIDERS_CONFIG.filter((p) => !p.hidden_in_edit_modal && p.special !== 'agent_platform'),
+    [],
+  );
+  const initialId = (() => {
+    const want = normalizeApiId(defaultApiId || '');
+    if (want && providers.some((p) => p.id === want)) return want;
+    if (providers.some((p) => p.id === cap.defaultProvider)) return cap.defaultProvider;
+    return providers[0] ? providers[0].id : '';
+  })();
+  const [providerId, setProviderId] = useState(initialId);
+  const [creds, setCreds] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [alibabaMode, setAlibabaMode] = useState('openai_compat');  // DashScope mode toggle
+
+  // 读一次当前凭据(用于 ProviderCard 显示「已配置」/已存 base_url),并随广播刷新。
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await window.api.credentials.list().catch(() => ({ items: [] }));
+        if (cancelled) return;
+        const map = {};
+        for (const c of (r?.items || r?.credentials || [])) {
+          const pid = normalizeApiId(c.api_id || c.id);
+          map[pid] = {
+            has_key: !!c.has_credential || !!c.has_key,
+            key_hint: c.key_hint || '',
+            base_url: c.base_url_override || '',
+          };
+        }
+        setCreds(map);
+      } catch (_) {}
+    };
+    load();
+    window.addEventListener('rpg-credentials-updated', load);
+    return () => { cancelled = true; window.removeEventListener('rpg-credentials-updated', load); };
+  }, []);
+
+  // ProviderCard 的 onSaveKey:保存 key(+ base_url)。credentials.set 内部已广播
+  // rpg-credentials-updated,父组件据此点亮「继续」。
+  const onSaveKey = async (pid, apiKey, baseUrl) => {
+    setSaving(true);
+    try {
+      if (apiKey && apiKey.trim()) {
+        await window.api.credentials.set({
+          api_id: pid,
+          api_key: apiKey.trim(),
+          base_url_override: baseUrl || undefined,
+        });
+      }
+      setCreds((s) => ({
+        ...s,
+        [pid]: { ...s[pid], has_key: !!(apiKey?.trim() || s[pid]?.has_key), base_url: baseUrl ?? s[pid]?.base_url },
+      }));
+      window.__apiToast?.('已保存 API Key', { kind: 'ok', duration: 1800 });
+      onSaved && onSaved(pid);
+    } catch (e) {
+      window.__apiToast?.('保存失败', { kind: 'danger', detail: e?.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const provider = providers.find((p) => p.id === providerId) || providers[0] || null;
+  if (!provider) return null;
+  const providerOptions = providers.map((p) => ({ value: p.id, label: p.name }));
+
+  return (
+    <CSSpaceBetween size="s">
+      <CSFormField label="服务商" description={`选择给「${cap.label}」配置 API Key 的服务商`}>
+        <CSSelect
+          selectedOption={providerOptions.find((o) => o.value === providerId) || null}
+          options={providerOptions}
+          onChange={({ detail }) => setProviderId(detail.selectedOption.value)}
+        />
+      </CSFormField>
+      <ProviderCard
+        provider={provider}
+        cred={creds[provider.id] || {}}
+        isSaving={saving}
+        alibabaMode={alibabaMode}
+        onSaveKey={onSaveKey}
+        onAlibabaMode={(v) => {
+          setAlibabaMode(v);
+          window.api.models.upsertApi({
+            api_id: 'dashscope',
+            kind: 'openai_compat',
+            base_url: v === 'openai_compat'
+              ? 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+              : 'https://dashscope.aliyuncs.com/api/v1',
+          }).catch(() => {});
+        }}
+      />
+    </CSSpaceBetween>
+  );
 }
 
 /* ModelConfigInterceptModal —— config_card 的 hard 拦截弹窗(mode==="model_not_configured")。
@@ -134,27 +250,18 @@ export default function ModelConfigInterceptModal({ open, item, onResolve, onCan
 
         {tab === 'key' && (
           <CSSpaceBetween size="s">
-            {keyError && <CSAlert type="error">{keyError}</CSAlert>}
             <CSBox color="text-body-secondary" fontSize="body-s">
-              {item.api_id
-                ? `为服务商「${item.api_id}」添加 API Key。`
-                : '添加一把 API Key（在弹窗里选择服务商）。'}
+              就地填写 API Key（默认选中该模型所属服务商,可改）。保存后回到「换一个模型」选要用的模型。
             </CSBox>
-            <CSButton iconName="add-plus" loading={saving} onClick={() => setEditKeyOpen(true)}>
-              添加 API Key
-            </CSButton>
+            {/* 就地内联凭据表单(复用设置页 ProviderCard);保存后切回「选模型」 */}
+            <InlineProviderConfig
+              capability={capability}
+              defaultApiId={(item && item.api_id) || ''}
+              onSaved={() => setTab('pick')}
+            />
           </CSSpaceBetween>
         )}
       </CSSpaceBetween>
-
-      {/* 复用设置页的 EditApiModal —— 不另造一套凭据表单 */}
-      <EditApiModal
-        open={editKeyOpen}
-        api={prefillApi}
-        isNew
-        onClose={() => setEditKeyOpen(false)}
-        onConfirm={onConfirmKey}
-      />
     </CSModal>
   );
 }

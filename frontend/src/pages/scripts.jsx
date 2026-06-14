@@ -2180,7 +2180,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
           || Array.from(ids)[0]
           || 'deepseek';
         setExtractApiId(preferred);
-        setExtractModel(p['extractor.model_real_name'] || 'deepseek-v4-flash');
+        setExtractModel(p['extractor.model_real_name'] || '');
         if (embedSt?.ok) setEmbedderStatus(embedSt);
       } catch (_) {}
     })();
@@ -3047,7 +3047,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
             <AgentModelPicker
               prefPrefix="extractor"
               preferProvider="deepseek"
-              defaultModel="deepseek-v4-flash"
+              defaultModel={null}
               variant="bare"
               persistOnMount
               configHash="settings-models"
@@ -3459,8 +3459,11 @@ function KbExtractPanel({ script, onDone }) {
   // 旧"提取"按钮其实=重新导入剧本,改成显式 scope 让用户清楚选哪种
   const [scope, setScope] = useStatePL('full');
   const [algorithm, setAlgorithm] = useStatePL('arc');
-  const [model, setModel] = useStatePL('deepseek-v4-flash');
-  const [apiId, setApiId] = useStatePL('deepseek');
+  // Provider/Model 统一由 AgentModelPicker(prefPrefix=extractor)管理:它解析用户
+  // 已配凭据 + 偏好后通过 onChange 回传 {api_id, model_real_name},这里只持有回传值
+  // 用于拼请求体。与本文件「提取模型」(L3047)同一套实现,不再自造平行选择器。
+  const [model, setModel] = useStatePL('');
+  const [apiId, setApiId] = useStatePL('');
   const [targetArcs, setTargetArcs] = useStatePL('100');
   const [concurrency, setConcurrency] = useStatePL('15');
   const [authorEra, setAuthorEra] = useStatePL('');
@@ -3475,7 +3478,6 @@ function KbExtractPanel({ script, onDone }) {
   const [job, setJob] = useStatePL(null);
   const [phase, setPhase] = useStatePL('config'); // config | running | done | error
   const [err, setErr] = useStatePL('');
-  const [apis, setApis] = useStatePL([]); // 模型管理:已配置的 provider + 模型
   const esRef = React.useRef(null);
 
   React.useEffect(() => () => { try { esRef.current && esRef.current.close && esRef.current.close(); } catch (_) {} }, []);
@@ -3501,32 +3503,14 @@ function KbExtractPanel({ script, onDone }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sid]);
 
-  // 接入模型管理系统:拉 /api/models,默认套用「叙事提取器」已配的 provider/model
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [profile, models] = await Promise.all([
-          window.api.account.profile().catch(() => ({})),
-          window.api.models.list().catch(() => ({})),
-        ]);
-        if (cancelled) return;
-        const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
-        setApis(Array.isArray(list) ? list : []);
-        const p = (profile && profile.preferences) || {};
-        if (p['extractor.api_id']) setApiId(p['extractor.api_id']);
-        if (p['extractor.model_real_name']) setModel(p['extractor.model_real_name']);
-      } catch (_) {}
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
   const cfgBody = () => {
     const body = {
       scope,
       algorithm,
-      model: (model || '').trim() || 'deepseek-v4-flash',
-      api_id: (apiId || '').trim() || 'deepseek',
+      // model/api_id 来自 AgentModelPicker(extractor 偏好)解析的用户已配凭据;
+      // 不再硬编码 deepseek 兜底(那会让没配 deepseek key 的用户提交到无凭据 provider)。
+      model: (model || '').trim(),
+      api_id: (apiId || '').trim(),
       target_arcs: Number(targetArcs) || 40,
       concurrency: Number(concurrency) || 15,
       author_era: (authorEra || '').trim(),
@@ -3603,20 +3587,6 @@ function KbExtractPanel({ script, onDone }) {
   const overallTotal = job ? (job.overall_total || 4) : 4;
   const usage = job && job.usage_actual;
 
-  // 模型管理:provider + 模型联动下拉
-  const currentApi = apis.find(a => (a.api_id || a.id) === apiId) || null;
-  const modelList = (currentApi && (currentApi.models || currentApi.entries)) || [];
-  const apiOptions = apis.map(a => ({ value: a.api_id || a.id, label: a.display_name || a.name || (a.api_id || a.id) }));
-  if (apiId && !apiOptions.some(o => o.value === apiId)) apiOptions.unshift({ value: apiId, label: apiId + t('scripts.review.api_not_in_mgr') });
-  const modelOptions = modelList.map(m => ({ value: m.real_name || m.id, label: m.display_name || m.real_name || m.id }));
-  if (model && !modelOptions.some(o => o.value === model)) modelOptions.unshift({ value: model, label: model + t('scripts.review.model_custom') });
-  const onPickApi = (v) => {
-    setApiId(v);
-    const a = apis.find(x => (x.api_id || x.id) === v);
-    const m0 = a && (a.models || a.entries || [])[0];
-    if (m0) setModel(m0.real_name || m0.id);
-  };
-
   return (
     <CSSpaceBetween size="l">
       <CSSpaceBetween direction="horizontal" size="xs">
@@ -3687,32 +3657,31 @@ function KbExtractPanel({ script, onDone }) {
               </CSColumnLayout>
             )}
             {scope === 'full' && (
-            <CSColumnLayout columns={2}>
-              <CSFormField label="Provider" description={t('scripts.review.provider_desc')}>
-                <CSSelect
-                  selectedOption={apiOptions.find(o => o.value === apiId) || (apiId ? { value: apiId, label: apiId } : null)}
-                  options={apiOptions}
-                  placeholder={t('scripts.review.provider_placeholder')}
-                  empty={t('scripts.review.provider_empty')}
-                  onChange={({ detail }) => onPickApi(detail.selectedOption.value)}
+              <CSSpaceBetween size="l">
+                {/* Provider+Model:全站唯一实现 AgentModelPicker(extractor 偏好)。
+                    它只列出用户已配凭据的 provider、给「未配 key」告警、解析后通过
+                    onChange 回传 {api_id, model_real_name} 供 cfgBody() 拼请求体;
+                    persistOnMount 把解析出的默认写回 extractor.* 偏好,与 L3047
+                    导入侧「提取模型」完全同源、同持久化键。 */}
+                <AgentModelPicker
+                  prefPrefix="extractor"
+                  preferProvider="deepseek"
+                  defaultModel={null}
+                  variant="bare"
+                  persistOnMount
+                  configHash="settings-models"
+                  description={t('scripts.review.model_desc')}
+                  onChange={(api_id, model_real_name) => { setApiId(api_id || ''); setModel(model_real_name || ''); }}
                 />
-              </CSFormField>
-              <CSFormField label={t('scripts.review.model')} description={t('scripts.review.model_desc')}>
-                <CSSelect
-                  selectedOption={modelOptions.find(o => o.value === model) || (model ? { value: model, label: model } : null)}
-                  options={modelOptions}
-                  placeholder={t('scripts.review.model_placeholder')}
-                  empty={t('scripts.review.model_empty')}
-                  onChange={({ detail }) => setModel(detail.selectedOption.value)}
-                />
-              </CSFormField>
-              {algorithm === 'arc' && (
-                <CSFormField label={t('scripts.review.target_arcs')} description={t('scripts.review.target_arcs_desc')}><CSInput type="number" value={targetArcs} onChange={({ detail }) => setTargetArcs(detail.value)} /></CSFormField>
-              )}
-              <CSFormField label={t('scripts.review.concurrency')}><CSInput type="number" value={concurrency} onChange={({ detail }) => setConcurrency(detail.value)} /></CSFormField>
-              <CSFormField label={t('scripts.review.author_era')} description={t('scripts.review.author_era_desc')}><CSInput value={authorEra} onChange={({ detail }) => setAuthorEra(detail.value)} /></CSFormField>
-              <CSFormField label={t('scripts.review.max_usd')}><CSInput type="number" value={maxUsd} onChange={({ detail }) => setMaxUsd(detail.value)} /></CSFormField>
-            </CSColumnLayout>
+                <CSColumnLayout columns={2}>
+                  {algorithm === 'arc' && (
+                    <CSFormField label={t('scripts.review.target_arcs')} description={t('scripts.review.target_arcs_desc')}><CSInput type="number" value={targetArcs} onChange={({ detail }) => setTargetArcs(detail.value)} /></CSFormField>
+                  )}
+                  <CSFormField label={t('scripts.review.concurrency')}><CSInput type="number" value={concurrency} onChange={({ detail }) => setConcurrency(detail.value)} /></CSFormField>
+                  <CSFormField label={t('scripts.review.author_era')} description={t('scripts.review.author_era_desc')}><CSInput value={authorEra} onChange={({ detail }) => setAuthorEra(detail.value)} /></CSFormField>
+                  <CSFormField label={t('scripts.review.max_usd')}><CSInput type="number" value={maxUsd} onChange={({ detail }) => setMaxUsd(detail.value)} /></CSFormField>
+                </CSColumnLayout>
+              </CSSpaceBetween>
             )}
 
             {estimate && estimate.ok !== false && (
