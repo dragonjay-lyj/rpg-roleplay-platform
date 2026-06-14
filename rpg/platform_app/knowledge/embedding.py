@@ -225,6 +225,7 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
     import urllib.request
     import urllib.error
     import json as _json
+    from core.outbound_ua import outbound_user_agent
     global _last_openai_embed_error
     effective_url = (base_url.rstrip("/") if base_url else "https://api.openai.com/v1") + "/embeddings"
 
@@ -255,7 +256,13 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
             body["dimensions"] = EMBED_DIM
         req = urllib.request.Request(
             effective_url, data=_json.dumps(body).encode(),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                # 中转站多挂 Cloudflare,WAF 按默认 urllib UA 拦(实测 403 error 1010)→ 用浏览器 UA 穿透。
+                # 聊天/生图/拉模型早已统一走 core.outbound_ua,此前唯独漏了 embedding 路径 → 向量索引生成不了。
+                "User-Agent": outbound_user_agent(),
+            },
             method="POST",
         )
         with _opener.open(req, timeout=60) as resp:
@@ -317,6 +324,7 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
     import urllib.request
     import urllib.error
     import json as _json
+    from core.outbound_ua import outbound_user_agent
 
     if not api_key:
         log.warning("[embedding] gemini api_id but no api_key")
@@ -335,7 +343,7 @@ def _embed_via_gemini(model: str, api_key: str, texts: list[str], task_type: str
             req = urllib.request.Request(
                 url,
                 data=payload,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "User-Agent": outbound_user_agent()},
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=60) as resp:
