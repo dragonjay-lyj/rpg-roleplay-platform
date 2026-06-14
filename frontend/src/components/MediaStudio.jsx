@@ -141,7 +141,7 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
   );
 
   return (
-    <CSModal visible onDismiss={() => !working && onClose && onClose()} size="medium"
+    <CSModal visible onDismiss={() => onClose && onClose()} size="medium"
       header={<span style={{ fontFamily: 'var(--font-serif)' }}>角色形象 · {name || '更换图片'}</span>}>
       <div className="ms-tabs">
         <button className={`ms-tab${tab === TAB.GEN ? ' is-active' : ''}`} onClick={() => setTab(TAB.GEN)}>✦ AI 生成</button>

@@ -238,7 +238,16 @@ async def handle_image_gen(payload: dict[str, Any]) -> None:
         _fail(image_id, f"store_error: {exc}")
         return
 
-    # 5. update done
+    # 5. update done —— 但若生成期间被用户取消,则丢弃结果(不覆盖 cancelled→done、不写回附着)
+    try:
+        from platform_app.db import connect as _connect
+        with _connect() as _cdb:
+            _cur = _cdb.execute("select status from ai_images where id = %s", (image_id,)).fetchone()
+        if _cur and str(_cur.get("status") or "") == "cancelled":
+            log.info("[image_jobs] image_id=%s 生图完成前已被用户取消,丢弃结果", image_id)
+            return
+    except Exception as _cexc:
+        log.debug("[image_jobs] cancel-check skipped image_id=%s: %s", image_id, _cexc)
     try:
         update_image_record(image_id, "done", url=url)
     except Exception as exc:

@@ -505,7 +505,7 @@ async def api_active_tasks(user=Depends(require_user)):
         with connect() as db:
             rows = db.execute(
                 """
-                select ij.job_id, ij.kind, ij.status,
+                select ij.job_id, ij.kind, ij.status, ij.cancel_requested,
                        ij.overall_progress, ij.overall_total, ij.stage, ij.error,
                        extract(epoch from (now() - coalesce(ij.started_at, ij.created_at)))::int as elapsed_sec,
                        s.title as script_title
@@ -554,6 +554,8 @@ async def api_active_tasks(user=Depends(require_user)):
                 "progress_total": int(total) if show_prog else None,
                 "elapsed_sec": max(0, int(r["elapsed_sec"] or 0)),
                 "error": (r["error"] or None),
+                "canceling": bool(r["cancel_requested"]),
+                "cancelable": True,
             })
     except Exception as exc:
         _log.warning("[tasks] import_jobs 聚合失败(降级): %s", exc)
@@ -593,6 +595,8 @@ async def api_active_tasks(user=Depends(require_user)):
                 "progress_total": None,
                 "elapsed_sec": max(0, int(r["elapsed_sec"] or 0)),
                 "error": (r["error"] or None),
+                "canceling": False,
+                "cancelable": True,
             })
     except Exception as exc:
         _log.warning("[tasks] ai_images 聚合失败(降级): %s", exc)

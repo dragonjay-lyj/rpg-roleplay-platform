@@ -329,6 +329,38 @@ async def api_generate_image(request: Request):
     return json_response({"ok": True, **result})
 
 
+@router.post("/api/images/{image_id}/cancel")
+async def api_image_cancel(image_id: int, request: Request):
+    """取消本人的生图任务。pending → 直接从队列删除(永不执行);generating → 标 cancelled,
+    worker 完成时丢弃结果(不覆盖成 done、不写回附着目标)。幂等:已终态返回 noop。
+    取消只能由本接口显式触发——关闭生图弹窗/页面绝不取消队列。"""
+    user = require_user(request)
+    uid = int(user["id"])
+    init_db()
+    with connect() as db:
+        row = db.execute(
+            "select status from ai_images where id = %s and user_id = %s",
+            (image_id, uid),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="生图任务不存在或无权操作")
+        st = str(row["status"] or "")
+        if st in ("done", "failed", "cancelled"):
+            return json_response({"ok": True, "status": st, "noop": True})
+        db.execute(
+            "update ai_images set status = 'cancelled', error = '用户取消' "
+            "where id = %s and user_id = %s",
+            (image_id, uid),
+        )
+        # 尚未开始的队列任务直接删,避免 worker 再捡起来跑
+        db.execute(
+            "delete from chat_postproc_tasks where task_kind = 'image_gen' "
+            "and status = 'pending' and (payload->>'image_id') = %s",
+            (str(image_id),),
+        )
+    return json_response({"ok": True, "status": "cancelled"})
+
+
 @router.get("/api/images/list")
 async def api_list_images(request: Request):
     """按存档列出该用户的生图记录（仅 owner 可查）。
