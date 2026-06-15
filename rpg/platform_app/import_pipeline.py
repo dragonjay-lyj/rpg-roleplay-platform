@@ -2083,13 +2083,19 @@ def rebuild_facts_from_db(user_id: int, script_id: int) -> dict[str, Any]:
     }
 
 
-def rebuild_cards_from_canon(user_id: int, script_id: int) -> dict[str, Any]:
-    """LLM(可零 LLM 路径):从 kb_canon_entities 的 character 类回填 character_cards。
+def rebuild_cards_from_canon(user_id: int, script_id: int, *,
+                             chapter_max: int | None = None) -> dict[str, Any]:
+    """零 LLM:从 kb_canon_entities 的 character 类回填 character_cards。
     无 canon 数据时退化为 _aggregate_characters_from_facts(零 LLM 词频)。
+
+    chapter_max(进度感知角色卡 Phase 1A):仅回填 first_revealed_chapter<=chapter_max
+    的角色(过滤掉中后期才出场的角色,序章重建时不引入未登场角色);并透传
+    first_revealed_chapter 给 _sync(别再被刷成 0 丢防剧透章)。None=全书(默认)。
     """
     from . import knowledge
     from .knowledge.session import _aggregate_characters_from_facts
     partial_failures: list[dict[str, Any]] = []
+    cmax = int(chapter_max) if chapter_max is not None else None
     with connect() as db:
         before = db.execute(
             "select count(*) as c from character_cards "
@@ -2101,13 +2107,21 @@ def rebuild_cards_from_canon(user_id: int, script_id: int) -> dict[str, Any]:
         if not script:
             return {"ok": False, "error": "无权访问该剧本"}
         book = knowledge._ensure_book(db, script)
-        # 优先用 canon entity (LLM extract 已有);否则用 facts 聚合
-        canon_rows = db.execute(
-            "select name, aliases, summary, importance from kb_canon_entities "
+        # 优先用 canon entity (LLM extract 已有);否则用 facts 聚合。
+        # 补取 first_revealed_chapter:① 透传给 _sync 修「重建后丢防剧透章」② chapter_max 区间过滤。
+        # 0 / NULL = 未知章节,保守放行(不误隐藏该出场的角色,与 canon_repo._reveal_clause 语义一致)。
+        canon_sql = (
+            "select name, aliases, summary, importance, "
+            "coalesce(first_revealed_chapter, 0) as first_revealed_chapter "
+            "from kb_canon_entities "
             "where script_id = %s and type = 'character' "
-            "order by importance desc nulls last",
-            (script_id,),
-        ).fetchall()
+        )
+        canon_args: list[Any] = [script_id]
+        if cmax is not None:
+            canon_sql += "and (coalesce(first_revealed_chapter, 0) <= %s or coalesce(first_revealed_chapter, 0) = 0) "
+            canon_args.append(cmax)
+        canon_sql += "order by importance desc nulls last"
+        canon_rows = db.execute(canon_sql, tuple(canon_args)).fetchall()
         source = "canon"
         if canon_rows:
             chars: dict[str, Any] = {}
@@ -2126,11 +2140,14 @@ def rebuild_cards_from_canon(user_id: int, script_id: int) -> dict[str, Any]:
                     "sample_dialogue": [],
                     "priority": int(r.get("importance") or 0),
                     "aliases": list(r.get("aliases") or []),
+                    # 透传防剧透章(canon SELECT 已取),否则 _sync 写 0 丢章。
+                    "first_revealed_chapter": int(r.get("first_revealed_chapter") or 0),
+                    "importance": int(r.get("importance") or 0),
                 }
         else:
             source = "chapter_facts"
             try:
-                chars = _aggregate_characters_from_facts(script_id)
+                chars = _aggregate_characters_from_facts(script_id, chapter_max=cmax)
             except Exception as exc:
                 partial_failures.append({"stage": "aggregate", "error": str(exc)})
                 chars = {}
@@ -2143,8 +2160,47 @@ def rebuild_cards_from_canon(user_id: int, script_id: int) -> dict[str, Any]:
     return {
         "ok": True, "source": source,
         "before_count": before_count, "after_count": after_count,
+        "chapter_max": cmax,
         "partial_failures": partial_failures,
     }
+
+
+def rebuild_cards_with_llm(user_id: int, script_id: int, *,
+                           chapter_max: int | None = None,
+                           model: str = "deepseek-v4-flash",
+                           api_id: str = "deepseek",
+                           progress_cb=None) -> dict[str, Any]:
+    """可选 LLM 丰富重建(进度感知角色卡 Phase 1A):走 run_llm_extraction(带 chapter_max)
+    对 1..chapter_max 区间重抽规范层,产「该时期态」的丰富 identity/background,然后零 LLM
+    路径把 canon 回填到 character_cards。BYOK,用户付费。
+
+    优雅降级:LLM 抽取失败(无 key / 配额 / 网络)→ 回退零 LLM 版(rebuild_cards_from_canon),
+    保证「重建」永远有产物、永不报错卡死。
+    """
+    from .knowledge.llm_extract import run_llm_extraction
+    llm_ok = False
+    llm_error = ""
+    try:
+        r = run_llm_extraction(
+            user_id, script_id,
+            algorithm="arc",
+            model=model, api_id=api_id,
+            chapter_min=1, chapter_max=chapter_max,
+            confirmed=True,
+            progress_cb=progress_cb,
+        )
+        llm_ok = bool(r.get("ok"))
+        if not llm_ok:
+            llm_error = str(r.get("error") or r.get("message") or "llm_extract failed")
+    except Exception as exc:
+        llm_error = str(exc)
+    # 无论 LLM 是否成功,都跑零 LLM 回填把(新或旧)canon → character_cards。
+    out = rebuild_cards_from_canon(user_id, script_id, chapter_max=chapter_max)
+    out["source"] = "llm_extract" if llm_ok else (out.get("source") or "canon")
+    out["llm_ok"] = llm_ok
+    if llm_error and not llm_ok:
+        out.setdefault("partial_failures", []).append({"stage": "llm_extract", "error": llm_error})
+    return out
 
 
 def rebuild_worldbook_with_llm(user_id: int, script_id: int, *,
@@ -2308,7 +2364,8 @@ def estimate_module_rebuild(
     if module == "worldbook":
         needs_llm = (source_pref == "llm")
     if module == "cards":
-        needs_llm = False
+        # cards 默认零 LLM(从 canon/facts 反推),恒免费;仅 source/mode=='llm' 的丰富重建烧 LLM。
+        needs_llm = (source_pref == "llm")
     if module == "canon" and source_pref == "resolve_only":
         needs_llm = False
 
@@ -2404,6 +2461,29 @@ def estimate_module_rebuild(
                     est_out = int(_b.get("est_output_tokens") or 0)
                 except Exception:
                     est_in = est_out = 0
+            elif module == "cards":                 # 必是 source=='llm'(否则 needs_llm=False)
+                # 丰富重建走 run_llm_extraction(arc),与 canon 同口径估;chapter_max 限区间。
+                try:
+                    from extract.budget import estimate as _budget_estimate
+                    _cmax_raw = body.get("chapter_max")
+                    try:
+                        _cmax = int(_cmax_raw) if _cmax_raw not in (None, "") else None
+                    except (TypeError, ValueError):
+                        _cmax = None
+                    with connect() as db:
+                        _b = _budget_estimate(
+                            db, script_id, algorithm="arc",
+                            model=(llm_model or "deepseek-v4-flash"),
+                        )
+                    est_in = int(_b.get("est_input_tokens") or 0)
+                    est_out = int(_b.get("est_output_tokens") or 0)
+                    # chapter_max 区间钳:按 chapter_max/全书章数 线性折减(粗估,UI 标≈)。
+                    if _cmax and chapter_count and _cmax < chapter_count:
+                        ratio = max(0.0, min(1.0, _cmax / float(chapter_count)))
+                        est_in = int(est_in * ratio)
+                        est_out = int(est_out * ratio)
+                except Exception:
+                    est_in = est_out = 0
             elif module == "worldbook":             # 必是 source=='llm'(否则 needs_llm=False)
                 _base = max(canon_total, 20)
                 est_in = _base * 1500
@@ -2447,16 +2527,19 @@ def schedule_module_rebuild(
     if module not in REBUILD_MODULES:
         raise ValueError(f"unknown module: {module}")
     kind, action_label, needs_llm = REBUILD_MODULES[module]
+    source_pref = str(body.get("source") or body.get("mode") or "").lower()
     if needs_llm:
         # canon 默认走 LLM;worldbook **默认 canon(零 LLM)**,仅 source=='llm' 才需 LLM ——
         # 必须与 _run_module_rebuild 的 `src = source or "canon"` 对齐。否则默认(无 source)的
         # worldbook 会被误要求 LLM 凭证(没配 key 直接 credentials_required),而 runner 实际走
         # canon → 表现为「点生成世界书没反应/报错」。
-        source_pref = str(body.get("source") or body.get("mode") or "").lower()
         if module == "worldbook":
             needs_llm = (source_pref == "llm")
         if module == "canon" and source_pref == "resolve_only":
             needs_llm = False
+    # 进度感知角色卡:cards 默认零 LLM(False);仅 source/mode=='llm' 的丰富重建才需 BYOK 凭证。
+    if module == "cards" and source_pref == "llm":
+        needs_llm = True
     if needs_llm:
         require_user_llm_credential(user_id)
     with connect() as db:
@@ -2516,7 +2599,33 @@ def _run_module_rebuild(
         elif module == "chapter-facts":
             result = rebuild_facts_from_db(user_id, script_id)
         elif module == "cards":
-            result = rebuild_cards_from_canon(user_id, script_id)
+            # 进度感知角色卡:chapter_max 区间 + 可选 LLM 丰富(source/mode=='llm')。
+            cmax_raw = body.get("chapter_max")
+            try:
+                cmax = int(cmax_raw) if cmax_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                cmax = None
+            if source == "llm":
+                def _cards_progress(stage: str, info: dict) -> None:
+                    try:
+                        total = int(info.get("total") or 0)
+                        done = int(info.get("done") or 0)
+                        if stage == "arc_extract" and total:
+                            ctl.update(stage="arc_extract", stage_progress=done,
+                                       stage_total=total, overall_progress=done,
+                                       overall_total=max(total, 1))
+                        elif stage in ("seed", "per_chapter", "resolve", "embed"):
+                            ctl.update(stage=stage, stage_progress=done, stage_total=max(total, 1))
+                    except Exception:
+                        pass
+                result = rebuild_cards_with_llm(
+                    user_id, script_id, chapter_max=cmax,
+                    model=str(body.get("model") or "deepseek-v4-flash"),
+                    api_id=str(body.get("api_id") or "deepseek"),
+                    progress_cb=_cards_progress,
+                )
+            else:
+                result = rebuild_cards_from_canon(user_id, script_id, chapter_max=cmax)
         elif module == "canon":
             # full = 重抽 LLM;resolve_only = 从 chapter_extracts 重 cluster (零 LLM)
             from extract.rebuild import rebuild_canon_resolve_from_facts

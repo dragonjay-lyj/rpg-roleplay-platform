@@ -81,9 +81,29 @@ class EstimateIsHonestAboutCost(unittest.TestCase):
         self.assertRegex(PIPELINE, r"est_in = est_out = 0")
         self.assertRegex(PIPELINE, r"tokens_est = est_in \+ est_out")
 
-    def test_cards_is_zero_llm(self):
-        # cards = rebuild_cards_from_canon 零 LLM,estimate 必须置 needs_llm=False(显示免费)
-        self.assertRegex(PIPELINE, r'if module == "cards":\s*\n\s*needs_llm = False')
+    def test_cards_is_zero_llm_unless_llm_enrich(self):
+        # cards = rebuild_cards_from_canon **默认零 LLM**(显示免费);进度感知角色卡新增「LLM 丰富
+        # 重建」选项后,仅 source/mode=='llm' 才烧 LLM。
+        #   · estimate(_estimate_module_rebuild):`if module == "cards": needs_llm = (source_pref == "llm")`
+        #   · schedule(schedule_module_rebuild):REBUILD_MODULES['cards'] 恒 False(默认免费),
+        #     再 `if module == "cards" and source_pref == "llm": needs_llm = True`。
+        # 锁住「默认免费、仅 llm 丰富才烧」这一行为,而非旧的无条件 needs_llm=False。
+        self.assertRegex(
+            PIPELINE,
+            r'if module == "cards":\s*\n(?:\s*#.*\n)*\s*needs_llm = \(source_pref == "llm"\)',
+            "estimate 应把 cards needs_llm 对齐为 source=='llm'(默认免费,仅 llm 丰富才烧)",
+        )
+        self.assertRegex(
+            PIPELINE,
+            r'if module == "cards" and source_pref == "llm":\s*\n(?:\s*#.*\n)*\s*needs_llm = True',
+            "schedule 应仅在 source=='llm' 时把 cards 标记 needs_llm=True",
+        )
+        # cards 在 REBUILD_MODULES 默认表里必须是 False(免费基线),否则没配 key 的用户重建不了角色卡。
+        self.assertRegex(
+            PIPELINE,
+            r'"cards":\s*\(\s*"rebuild_cards",[^)]*?,\s*False\s*\)',
+            "REBUILD_MODULES['cards'] 默认 needs_llm 必须为 False(免费基线)",
+        )
 
 
 class RunnerDefaultsToCanon(unittest.TestCase):

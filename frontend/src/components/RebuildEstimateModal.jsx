@@ -10,8 +10,45 @@ import CSButton from '@cloudscape-design/components/button';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import s from './editorial.module.css';
 
-export function RebuildEstimateModal({ open, module, scriptId, estimate, loading, onClose, onConfirm }) {
+export function RebuildEstimateModal({ open, module, scriptId, estimate, loading, options, onOptionsChange, onClose, onConfirm }) {
   const { t } = useTranslation();
+  const isCards = module === 'cards';
+
+  // 进度感知角色卡:cards 重建的「重建到第 N 章」+「LLM 丰富」本地状态。
+  // 改动 → debounce 后回调 onOptionsChange(带 chapter_max / mode)重估。
+  const [chapterMax, setChapterMax] = React.useState('');
+  const [llmEnrich, setLlmEnrich] = React.useState(false);
+  // 弹窗每次打开(module 变化)重置本地态,避免上次残留。
+  React.useEffect(() => {
+    if (open && isCards) {
+      setChapterMax(options && options.chapter_max != null ? String(options.chapter_max) : '');
+      setLlmEnrich(!!(options && (options.mode === 'llm' || options.source === 'llm')));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, module]);
+
+  const emitOptions = React.useCallback((nextCh, nextLlm) => {
+    if (!onOptionsChange) return;
+    const opts = {};
+    const n = parseInt(nextCh, 10);
+    if (Number.isFinite(n) && n > 0) opts.chapter_max = n;
+    if (nextLlm) opts.mode = 'llm';
+    onOptionsChange(opts);
+  }, [onOptionsChange]);
+
+  // chapter_max 输入 debounce 重估(避免每个按键打一次估算请求)。
+  const chDebounce = React.useRef(null);
+  const onChapterMaxChange = (v) => {
+    const cleaned = String(v || '').replace(/[^0-9]/g, '');
+    setChapterMax(cleaned);
+    if (chDebounce.current) clearTimeout(chDebounce.current);
+    chDebounce.current = setTimeout(() => emitOptions(cleaned, llmEnrich), 500);
+  };
+  const onLlmToggle = (checked) => {
+    setLlmEnrich(checked);
+    emitOptions(chapterMax, checked);  // toggle 立即重估(影响 token/成本)
+  };
+
   if (!open) return null;
 
   const ok              = estimate && estimate.ok !== false;
@@ -54,6 +91,43 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
       }
     >
       <div className={s.estimateBody}>
+        {/* 进度感知角色卡:cards 重建选项(重建到第 N 章 + LLM 丰富) */}
+        {isCards && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 600 }}>
+                {t('modules.cards.chapter_max_label', { defaultValue: '重建到第 N 章' })}
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={chapterMax}
+                placeholder={t('modules.cards.chapter_max_placeholder', { defaultValue: '留空 = 全书；填进度章可避免引入未登场角色' })}
+                onChange={(e) => onChapterMaxChange(e.target.value)}
+                disabled={loading}
+                style={{ padding: '6px 10px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 4,
+                         fontSize: 13, background: 'var(--bg, #fff)', color: 'var(--text, #222)' }}
+              />
+              <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)' }}>
+                {t('modules.cards.chapter_max_help', { defaultValue: '只回填该章前已登场的角色，并保留每个角色的首次揭示章（防剧透）。' })}
+              </span>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={llmEnrich}
+                onChange={(e) => onLlmToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.cards.llm_enrich_label', { defaultValue: 'LLM 丰富重建（消耗你的 API Key，产更丰富的该时期人设）' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {t('modules.cards.llm_enrich_help', { defaultValue: '默认零 LLM、免费。勾选后按区间重抽该时期态；无 Key 会自动降级到免费版。' })}
+            </span>
+          </div>
+        )}
+
         {/* Loading state */}
         {loading && (
           <div className={s.estimateLoading}>

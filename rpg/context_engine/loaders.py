@@ -6,27 +6,50 @@ from typing import Any
 
 from context_engine._constants import CHAR_IDX, WORLD_IDX
 
+# 进度感知角色卡:partial(穿越者模糊预知)在严格进度上叠加的近未来缓冲章数。
+# 温和放宽,避免大幅剧透;none=0(严格),omniscient=不 gate。
+_PARTIAL_LOOKAHEAD_CHAPTERS = 20
 
-def _safe_load_chars(script_id, book_id, manifest) -> dict[str, Any]:
+
+def _safe_load_chars(script_id, book_id, manifest,
+                     progress_chapter: int | None = None,
+                     foreknowledge_mode: str = "omniscient") -> dict[str, Any]:
     """state_schema 层需要 chars dict 来列出已知 NPC enum。
-    模组场景没有小说角色卡 → 返回空 dict，不再误读 .webnovel/indexes。"""
+    模组场景没有小说角色卡 → 返回空 dict，不再误读 .webnovel/indexes。
+
+    progress_chapter / foreknowledge_mode(进度感知角色卡 Phase 1B):透传给
+    _load_characters → _load_characters_db 的 reveal 闸。state_schema 用途默认
+    omniscient(列 NPC enum 不该被进度截断);GM 卡注入路径(novel.py)显式传严格档。
+    """
     if not manifest:
-        return _load_characters(script_id=script_id, book_id=book_id)
+        return _load_characters(script_id=script_id, book_id=book_id,
+                                progress_chapter=progress_chapter,
+                                foreknowledge_mode=foreknowledge_mode)
     if manifest.get("kind") == "novel_adaptation":
-        return _load_characters(script_id=script_id, book_id=book_id)
+        return _load_characters(script_id=script_id, book_id=book_id,
+                                progress_chapter=progress_chapter,
+                                foreknowledge_mode=foreknowledge_mode)
     return {}
 
 
-def _load_characters(script_id: int | None = None, book_id: int | None = None) -> dict[str, Any]:
+def _load_characters(script_id: int | None = None, book_id: int | None = None,
+                     progress_chapter: int | None = None,
+                     foreknowledge_mode: str = "omniscient") -> dict[str, Any]:
     """task 80: 通用底座 — 优先从 DB character_cards 取。
     传了 script_id/book_id 表示指定剧本: DB 空就返 {} (不要回退 JSON,
     那是单一书的固化数据,会污染其它剧本)。
     完全没传 (legacy 兼容): 才允许 JSON 回退。
+
+    progress_chapter / foreknowledge_mode(进度感知角色卡 Phase 1B):
+    默认 omniscient(向后兼容:不传=不 gate,管理/枚举视角看全部)。GM 注入路径
+    显式传 progress_chapter + 严格档以挡掉「序章看到尚未登场角色」。
     """
     scoped = bool(script_id or book_id)
     if scoped:
         try:
-            return _load_characters_db(script_id=script_id, book_id=book_id) or {}
+            return _load_characters_db(script_id=script_id, book_id=book_id,
+                                       progress_chapter=progress_chapter,
+                                       foreknowledge_mode=foreknowledge_mode) or {}
         except Exception:
             return {}
     try:
@@ -36,8 +59,18 @@ def _load_characters(script_id: int | None = None, book_id: int | None = None) -
         return {}
 
 
-def _load_characters_db(script_id: int | None, book_id: int | None) -> dict[str, Any]:
-    """从 character_cards 表读取该 script/book 启用的角色卡，转成 JSON 风格 dict。"""
+def _load_characters_db(script_id: int | None, book_id: int | None,
+                        progress_chapter: int | None = None,
+                        foreknowledge_mode: str = "omniscient") -> dict[str, Any]:
+    """从 character_cards 表读取该 script/book 启用的角色卡，转成 JSON 风格 dict。
+
+    进度感知角色卡 Phase 1B — reveal 闸(防剧透,确定性):
+      none / partial : WHERE 追加 (first_revealed_chapter<=progress OR first_revealed_chapter=0)
+                       → 挡掉中后期才登场、当前进度尚未揭示的角色。
+                       first_revealed_chapter=0(未知)= 保守放行(别误隐藏该出场的角色,
+                       与 canon_repo._reveal_clause 同语义)。
+      omniscient / progress_chapter=None : 不 gate(管理/枚举/全知视角看全部)。
+    """
     from platform_app.db import connect
     where_clauses = ["enabled = true"]
     params: list[Any] = []
@@ -47,9 +80,19 @@ def _load_characters_db(script_id: int | None, book_id: int | None) -> dict[str,
     elif book_id:
         where_clauses.append("book_id = %s")
         params.append(int(book_id))
+    # 进度感知 reveal 闸:omniscient 或 progress=None 不加;否则按进度截断(0=保守放行)。
+    #   none    : first_revealed_chapter <= progress(严格)
+    #   partial : <= progress + 近未来缓冲(穿越者模糊预知,温和放宽,参 canon_repo partial 语义)
+    mode = (foreknowledge_mode or "omniscient").lower()
+    if mode != "omniscient" and progress_chapter is not None:
+        ceiling = int(progress_chapter)
+        if mode == "partial":
+            ceiling += _PARTIAL_LOOKAHEAD_CHAPTERS
+        where_clauses.append("(first_revealed_chapter <= %s or first_revealed_chapter = 0)")
+        params.append(ceiling)
     # v28: 显式补 card_type='npc' 过滤(PC/persona 不应进 GM 检索池);
     # 加 full_name / background / first_revealed_chapter — background 是 v28 核心新增
-    # 给 GM context 看角色前史/出身/动机,first_revealed_chapter 后续可作章节闸。
+    # 给 GM context 看角色前史/出身/动机,first_revealed_chapter 是进度感知 reveal 闸的依据。
     sql = (
         "select script_id, name, full_name, aliases, identity, background, "
         "appearance, personality, speech_style, current_status, secrets, "

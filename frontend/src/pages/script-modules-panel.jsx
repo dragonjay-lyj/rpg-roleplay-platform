@@ -127,10 +127,7 @@ export function useScriptRebuild(scriptId) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeJob && (activeJob.job_id || activeJob.id), scriptId, reload]);
 
-  const openEstimate = React.useCallback(async ({ module, options }) => {
-    if (!module || !scriptId) return;
-    setPendingModule(module);
-    setPendingOptions(options || null);
+  const runEstimate = React.useCallback(async (module, options) => {
     setEstimate(null);
     setEstimateLoading(true);
     try {
@@ -143,6 +140,21 @@ export function useScriptRebuild(scriptId) {
       setEstimateLoading(false);
     }
   }, [scriptId]);
+
+  const openEstimate = React.useCallback(async ({ module, options }) => {
+    if (!module || !scriptId) return;
+    setPendingModule(module);
+    setPendingOptions(options || null);
+    await runEstimate(module, options);
+  }, [scriptId, runEstimate]);
+
+  // 进度感知角色卡:cards 重建面板里改「重建到第 N 章」/「LLM 丰富」时,带新 options 重估并记下,
+  // 让 confirmRebuild 用最新 options 派发(chapter_max / mode)。
+  const updateOptions = React.useCallback(async (nextOptions) => {
+    if (!pendingModule || !scriptId) return;
+    setPendingOptions(nextOptions || null);
+    await runEstimate(pendingModule, nextOptions || {});
+  }, [pendingModule, scriptId, runEstimate]);
 
   const closeEstimate = React.useCallback(() => {
     setPendingModule(null);
@@ -222,6 +234,8 @@ export function useScriptRebuild(scriptId) {
     scriptId,
     estimate,
     loading: estimateLoading,
+    options: pendingOptions,
+    onOptionsChange: updateOptions,  // 进度感知角色卡:cards 改 chapter_max/mode 时重估
     onClose: closeEstimate,
     onConfirm: confirmRebuild,
   };

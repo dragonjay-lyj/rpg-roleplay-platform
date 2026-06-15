@@ -2644,7 +2644,12 @@
     },
     "cards": {
       "title": "NPC cards",
-      "desc": "Editable NPC profile cards (used by the GM)"
+      "desc": "Editable NPC profile cards (used by the GM)",
+      "chapter_max_label": "Rebuild up to chapter N",
+      "chapter_max_placeholder": "Blank = whole book; set your progress chapter to skip not-yet-appeared characters",
+      "chapter_max_help": "Only backfills characters revealed by that chapter, and preserves each character's first-revealed chapter (spoiler-safe).",
+      "llm_enrich_label": "LLM-enriched rebuild (uses your API key; richer period-accurate personas)",
+      "llm_enrich_help": "Default is zero-LLM and free. When checked, re-extracts the period state for the range; falls back to the free version if no key."
     },
     "worldbook": {
       "title": "Worldbook",

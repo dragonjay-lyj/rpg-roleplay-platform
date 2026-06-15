@@ -70,7 +70,12 @@
     },
     "cards": {
       "title": "NPC 角色卡",
-      "desc": "可编辑的 NPC 设定卡(GM 用)"
+      "desc": "可编辑的 NPC 设定卡(GM 用)",
+      "chapter_max_label": "重建到第 N 章",
+      "chapter_max_placeholder": "留空 = 全书；填进度章可避免引入未登场角色",
+      "chapter_max_help": "只回填该章前已登场的角色，并保留每个角色的首次揭示章（防剧透）。",
+      "llm_enrich_label": "LLM 丰富重建（消耗你的 API Key，产更丰富的该时期人设）",
+      "llm_enrich_help": "默认零 LLM、免费。勾选后按区间重抽该时期态；无 Key 会自动降级到免费版。"
     },
     "worldbook": {
       "title": "世界书",
