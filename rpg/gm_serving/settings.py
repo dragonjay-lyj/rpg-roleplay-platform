@@ -20,7 +20,9 @@ SETTINGS_SCHEMA: list[dict] = [
      "help": "suspicious 时 NPC 会对玩家的异常先知起疑。"},
     {"key": "steering_strength", "label": "剧情引导强度", "type": "enum", "default": "guided",
      "options": ["rail", "guided", "free"], "locked_after_create": False, "step": 4,
-     "help": "rail=强力贴原著;guided=软目标引导(默认);free=最大自由。"},
+     "help": "rail=贴原著(强力锚点):把下一个待发生锚点当成必须推进的下一拍,GM 主动收束、"
+             "偏离 1-3 轮内拉回(仍允许合理变体);guided=软引导(默认温和):软目标朝锚点自然推进;"
+             "free=自由:不注入引导。"},
     {"key": "spoiler_guard", "label": "防剧透强度", "type": "enum", "default": "strict",
      "options": ["strict", "loose"], "locked_after_create": False, "step": 4,
      "help": "strict=严格按进度过滤未揭示内容;loose=放宽。"},

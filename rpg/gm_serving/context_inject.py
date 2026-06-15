@@ -85,14 +85,24 @@ def build_constant_layer(db, script_id: int, *, budget_tokens: int | None = None
 
 
 def build_injection(db, *, script_id: int, scene_summary: str = "", steering_hint: str = "",
-                    budget_tokens: int | None = None) -> dict:
-    """组装第①层常驻注入。返回 {text, tokens, budget}。"""
+                    steering_strength: str = "guided", budget_tokens: int | None = None) -> dict:
+    """组装第①层常驻注入。返回 {text, tokens, budget}。
+
+    steering_strength 决定 steering_hint 的**外层包裹标签强弱**——这是「贴原著」此前退化成
+    与「软引导」一样温和的真根因:旧代码无条件用「软目标(引导非铁轨)」包裹,把 steering.py
+    已产出的 rail 强措辞又软化掉。现按强度分档:
+      rail   — 「世界线收束 · 强制下一拍(必须推进)」硬标签,与内文强措辞一致。
+      其它   — 「剧情软目标(引导非铁轨)」温和标签(保持软引导/自由行为不变)。
+    """
     budget = budget_tokens if budget_tokens is not None else compute_budget(db, script_id)
     constant = build_constant_layer(db, script_id, budget_tokens=budget)
     blocks = [constant]
     if scene_summary:
         blocks.append(f"【当前场景】{scene_summary}")
     if steering_hint:
-        blocks.append(f"【剧情软目标(引导非铁轨)】{steering_hint}")
+        if steering_strength == "rail":
+            blocks.append(f"【世界线收束 · 强制下一拍(必须推进)】{steering_hint}")
+        else:
+            blocks.append(f"【剧情软目标(引导非铁轨)】{steering_hint}")
     text = "\n\n".join(b for b in blocks if b)
     return {"text": text, "tokens": _est_tokens(text), "budget": budget}

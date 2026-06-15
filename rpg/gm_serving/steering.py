@@ -13,13 +13,18 @@ def resolve_steering_target(db, *, save_id: int, script_id: int,
                             steering_strength: str = "guided") -> dict:
     """产出 ① 层软目标。
 
-    返回 {worldline, passed_nodes, next_node, soft_goal, pending_anchors}。
+    返回 {worldline, passed_nodes, next_node, soft_goal, pending_anchors, strength}。
     定位:看已 occurred 的 save_anchor_states 簇匹配到哪个 worldline 节点;取序号下一个节点。
 
-    steering_strength:
-      rail    — 强化注入,明确要求贴合节点描述(用词更强硬)
-      guided  — 现状默认,软目标引导但不强制(保守措辞)
-      free    — 不注入软目标,完全自由发挥
+    steering_strength(三档真实强度梯度,详见 settings.py SETTINGS_SCHEMA):
+      rail    — 贴原著:把【当前/下一个待发生锚点】当成「接下来必须推进到的下一拍」用
+                **强措辞**注入(非温和软目标),要求 GM 主动收束、玩家偏离 1-3 轮内拉回。
+                配合 anchor_reconcile 确定性兜底形成「强推 + 确定性跟踪」。
+      guided  — 现状默认,软目标引导但不强制(保守措辞)。
+      free    — 不注入软目标,完全自由发挥。
+
+    `strength` 字段回传给 context_inject.build_injection,决定外层包裹标签的强弱
+    (rail 用「强制下一拍」硬标签;guided 用「软目标·引导非铁轨」温和标签)。
     """
     worldlines = canon_repo.read_worldlines(db, script_id)
     if not worldlines:
@@ -30,7 +35,7 @@ def resolve_steering_target(db, *, save_id: int, script_id: int,
     if not nodes:
         # 粗弧层 script_worldline_nodes 没建(很多剧本只 seed 了细 save_anchor_states,
         # 没跑世界树脊柱)→ 旧代码静默返回空 soft_goal,GM 完全无引导、玩家「锚点推不动」。
-        # 降级:用细锚点层的 top-1 pending 合成温和 soft_goal,受 steering_strength 控制。
+        # 降级:用细锚点层的 top-1~2 pending 合成 soft_goal,受 steering_strength 控制。
         return _fallback_soft_goal(save_id, wl_key=wl["wl_key"], steering_strength=steering_strength)
 
     # 已 occurred 的锚点 keys
@@ -57,11 +62,15 @@ def resolve_steering_target(db, *, save_id: int, script_id: int,
             # 自由模式:不注入软目标,让 GM 自由发挥
             soft = ""
         elif steering_strength == "rail":
-            # 强贴模式:明确要求紧贴节点走向
-            soft = (
-                f"【强制引导】当前必须推进到节点「{next_node['label']}」:{next_node.get('summary', '')}"
-                + must_str
-                + " ——请严格按照该节点方向推进剧情,不可大幅偏离原著走向。"
+            # 贴原著:强措辞「下一拍」收束。带 top-2 后续节点提示往哪推。
+            nxt2 = nodes[passed_idx + 2] if passed_idx + 2 < len(nodes) else None
+            after = (
+                f" 其后将推进到「{nxt2['label']}」({nxt2.get('summary', '')})。" if nxt2 else ""
+            )
+            soft = _rail_directive(
+                target=f"节点「{next_node['label']}」:{next_node.get('summary', '')}",
+                must_str=must_str,
+                after=after,
             )
         else:
             # guided(默认):软目标,温和引导
@@ -72,7 +81,13 @@ def resolve_steering_target(db, *, save_id: int, script_id: int,
             )
         pending = next_node.get("anchor_keys") or []
     else:
-        soft = "已抵达/超出当前规范世界线末节点,自由发挥并尽量保持世界自洽。"
+        if steering_strength == "rail":
+            soft = (
+                "已抵达/超出当前规范世界线末节点。保持世界自洽,围绕已确立的原著走向收尾,"
+                "不要凭空另起一条与原著无关的新主线。"
+            )
+        else:
+            soft = "已抵达/超出当前规范世界线末节点,自由发挥并尽量保持世界自洽。"
 
     return {
         "worldline": wl["wl_key"],
@@ -80,32 +95,59 @@ def resolve_steering_target(db, *, save_id: int, script_id: int,
         "next_node": next_node["node_key"] if next_node else None,
         "soft_goal": soft,
         "pending_anchors": pending,
+        "strength": steering_strength,
     }
+
+
+def _rail_directive(*, target: str, must_str: str = "", after: str = "") -> str:
+    """贴原著(rail)模式的**强力**收束指令文本。强措辞、明确「下一拍」、要求主动收束 +
+    偏离 1-3 轮内拉回 + 允许合理变体(drift)但不可另起炉灶长期跑偏。
+
+    与 master.py「世界线收束」段话术一致(命运式手段:巧合/误会/他人介入/环境压力)。
+    措辞定位:强力引导朝锚点 + 偏离尽快拉回,而非逐字复述原文(产品=活世界+收束)。
+    """
+    return (
+        "【贴原著 · 强制收束】接下来必须主动推进到的下一拍 = "
+        + target
+        + must_str
+        + after
+        + " ——这不是可选的软目标,而是本回合/接下来你必须主动朝其收束的剧本节点。"
+        " 玩家可以自由行动,但若偏离该下一拍,你须在 1-3 轮内用命运式手段(巧合 / 误会 /"
+        " 他人介入 / 环境压力)把剧情自然拉回,让玩家感觉不到生硬却仍抵达锚点。"
+        " 允许合理变体(地点 / 时机 / 旁观者不同,即 drift),但事件的【须保留】维度必须发生,"
+        " 不可另起炉灶长期跑偏到与原著无关的世界线。pending_questions 选项中至少 1 个要通往该下一拍。"
+    )
 
 
 def _fallback_soft_goal(save_id: int, *, wl_key: str | None,
                         steering_strength: str = "guided") -> dict:
-    """粗弧层(script_worldline_nodes)缺失时的确定性降级:用细锚点层的 top-1 pending
-    锚点合成一个温和 soft_goal,别让 GM 完全失去引导(用户「锚点推不动」根因之一)。
+    """粗弧层(script_worldline_nodes)缺失时的确定性降级:用细锚点层的 top-1~2 pending
+    锚点合成 soft_goal,别让 GM 完全失去引导(用户「锚点推不动」根因之一)。本书
+    script_worldline_nodes 多半为空,steering 实际就走这条路径。
 
-    free 模式仍不注入(尊重玩家选择)。其余强度都给最高 importance 的待发生锚点当软目标。
+    强度梯度必须保留:
+      free   — 仍不注入(尊重玩家选择)。
+      guided — top-1 待发生锚点,温和软目标。
+      rail   — **强力**版(非 gentle):top-1 当「下一拍」+ top-2 提示后续,强措辞收束。
     """
     base = {"worldline": wl_key, "passed_nodes": 0, "next_node": None,
-            "soft_goal": "", "pending_anchors": []}
+            "soft_goal": "", "pending_anchors": [], "strength": steering_strength}
     if steering_strength == "free":
         return base
+    # rail 多带一条(top-2)给「下一拍 + 其后」;guided 仍只取 top-1。
+    want = 2 if steering_strength == "rail" else 1
     try:
         from agents.anchor_seed_agent import list_pending_for_phase
         # 限当前进度窗口内,按 importance desc 取首个(防剧透 + 取最该推进的)。
         from agents.anchor_seed_agent import get_progress_window
         win = get_progress_window(int(save_id))
         pend = list_pending_for_phase(
-            int(save_id), None, limit=1,
+            int(save_id), None, limit=want,
             chapter_min=win.get("chapter_min"), chapter_max=win.get("chapter_max"),
         )
         if not pend:
-            # 窗口内没有 → 放宽到全档 top-1 pending(仍只读不写)。
-            pend = list_pending_for_phase(int(save_id), None, limit=1)
+            # 窗口内没有 → 放宽到全档 top-N pending(仍只读不写)。
+            pend = list_pending_for_phase(int(save_id), None, limit=want)
     except Exception:
         pend = []
     if not pend:
@@ -115,10 +157,13 @@ def _fallback_soft_goal(save_id: int, *, wl_key: str | None,
     must = a.get("must_preserve") or []
     must_str = f" 须保留:{'、'.join(must)}。" if must else ""
     if steering_strength == "rail":
-        soft = (
-            f"【强制引导】当前应朝原著关键事件推进:{summary}"
-            + must_str
-            + " ——请把剧情自然引向这个事件,不可大幅偏离原著走向。"
+        after = ""
+        if len(pend) > 1 and (pend[1].get("summary") or "").strip():
+            after = f" 其后将推进到:{(pend[1].get('summary') or '').strip()}。"
+        soft = _rail_directive(
+            target=f"原著关键事件「{summary}」",
+            must_str=must_str,
+            after=after,
         )
     else:  # guided(默认)
         soft = (
