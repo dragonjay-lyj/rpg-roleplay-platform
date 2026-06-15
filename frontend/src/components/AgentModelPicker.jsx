@@ -7,6 +7,7 @@ import CSSelect from '@cloudscape-design/components/select';
 import CSInput from '@cloudscape-design/components/input';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSButton from '@cloudscape-design/components/button';
+import { credApiIdSet } from './catalog-helpers.js';
 
 // ── variant="popover" 紧凑浮层样式(只注一次;复用与旧 ModelPopover 同源的视觉 token) ──
 const AMP_POP_STYLE_ID = 'amp-pop-styles-v1';
@@ -139,14 +140,7 @@ export default function AgentModelPicker({
         const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
         setApis(Array.isArray(list) ? list : []);
         // AgentPlatform 是 Vertex 的 SA 凭证 — UI 里归一成 vertex_ai（与后端 canonical 一致）
-        const ids = new Set();
-        for (const c of (creds?.items || creds?.credentials || [])) {
-          if (c.enabled === false) continue;
-          if (!(c.has_credential || c.has_key || c.key_hint !== undefined)) continue;
-          const aid = (c.api_id || c.id || '').trim();
-          ids.add(aid === 'AgentPlatform' ? 'vertex_ai' : aid);
-        }
-        setCredApiIds(ids);
+        setCredApiIds(credApiIdSet(creds));
         // 后端 selected 是全局默认模型（由 /api/models 返回）；
         // defaultModel prop 若未传（null），就从 selected 取。
         const backendSelected = models?.selected;

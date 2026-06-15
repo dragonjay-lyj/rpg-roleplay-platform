@@ -498,6 +498,10 @@ function SavesListView() {
     setDeleting(true);
     try {
       await window.api.saves.remove(deleteTarget.id);
+      // 乐观地从本地列表过滤掉被删档:reload() 是异步的,自动选中 effect
+      // 会在旧 saves 列表上先跑一轮,若不先过滤会把已删档重新选回来。
+      const removedId = deleteTarget.id;
+      setSaves(prev => prev.filter(s => s.id !== removedId));
       flash.ok(t('saves.toast.deleted')); setDeleteTarget(null); setSelectedId(null); reload();
     } catch (e) { flash.err(t('saves.toast.delete_fail', { err: e?.message || '' })); }
     setDeleting(false);
@@ -1944,6 +1948,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   // 反馈#4:新游戏表单草稿本地持久化——填到一半切页/关弹窗回来不丢,仅"成功开始游戏"后清空。
   const NEWGAME_DRAFT_KEY = 'newgame.draft.v1';
   const draftReadyRef = React.useRef(false);  // 草稿恢复完成前不回写,避免初始 reset 把草稿覆盖
+  // 失败重试去重:roleMode==='new' 时只创建一次角色卡,重试复用已创建的 id,
+  // 避免每次 handleSubmit 重试都 myUpsert 落一张新卡。
+  const createdCardRef = React.useRef(null);
   const clearNewgameDraft = React.useCallback(() => {
     try { localStorage.removeItem(NEWGAME_DRAFT_KEY); } catch (_) {}
   }, []);
@@ -1952,6 +1959,7 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   React.useEffect(() => {
     if (!open) return;
     draftReadyRef.current = false;  // 反馈#4:恢复完成前禁止回写草稿
+    createdCardRef.current = null;  // 新一轮开窗清空已创建卡引用
     // reset transient state
     setTitle(""); setSubmitErr(""); setSubmitting(false); setReviewGateBlocked(false); setLoading(true); setPlayerOrigin('soul'); setIdentityKnown(true);
     setNewCardForm(cardFormInit(null)); setPreviewCard(null);
@@ -2119,9 +2127,15 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
       let charId = roleMode !== "new" && picked ? (picked.id || picked.slug || null) : null;
       let charKind = roleMode !== "new" && picked ? picked.kind : null;
       if (roleMode === "new") {
-        const r = await window.api.cards.myUpsert(cardFormPayload(newCardForm));
-        const created = r && r.card;
-        if (!created || !(created.id || created.slug)) throw new Error(t('saves.new_game.card_create_fail'));
+        // 失败重试去重:首次创建后把卡存进 createdCardRef,重试直接复用已落库的 id,
+        // 不再重复 myUpsert 产生重复角色卡。
+        let created = createdCardRef.current;
+        if (!created || !(created.id || created.slug)) {
+          const r = await window.api.cards.myUpsert(cardFormPayload(newCardForm));
+          created = r && r.card;
+          if (!created || !(created.id || created.slug)) throw new Error(t('saves.new_game.card_create_fail'));
+          createdCardRef.current = created;
+        }
         charId = created.id || created.slug;
         charKind = "user_card";
       }

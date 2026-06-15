@@ -90,7 +90,25 @@ function fmtAgo(ts) {
   if (diff < 86400 * 7) return Math.floor(diff / 86400) + " 天前";
   return d.toLocaleDateString();
 }
-window.__fmt = { bytes: fmtBytes, ago: fmtAgo };
+// zh-CN 24 小时制完整时间戳(各页 fmtTime 共用,坏值原样返回)
+function fmtTime(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString("zh-CN", { hour12: false }); } catch (_) { return iso; }
+}
+// YYYY-MM-DD(各页 fmtDate 共用)
+function fmtDate(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toISOString().slice(0, 10); } catch (_) { return "—"; }
+}
+// HH:MM(消息时间戳),用 now 或传入时间
+function nowHHMM(d) {
+  try { return (d ? new Date(d) : new Date()).toLocaleTimeString().slice(0, 5); } catch (_) { return ""; }
+}
+// null 安全千分位(非数字原样转字符串);不做 K/M 缩写
+function fmtNum(n) {
+  return n == null ? "—" : (typeof n === "number" ? n.toLocaleString() : String(n));
+}
+window.__fmt = { bytes: fmtBytes, ago: fmtAgo, time: fmtTime, date: fmtDate, nowHHMM, n: fmtNum };
 window.__guessKind = function () { return guessKind.apply(null, arguments); };
 
 // ----------------------------------------------------------
@@ -127,6 +145,8 @@ async function hydratePlatform() {
         uid: me.user.uid || "u_" + (me.user.id || ""),
         bio: me.user.bio || platform.user.bio,
         id: me.user.id,
+        // 透传首登须知弹窗状态(null=从未 dismiss),否则前端 === null 判断永远拿不到字段
+        welcome_dismissed_at: me.user.welcome_dismissed_at ?? null,
       };
     } else {
       // 后端确认匿名：把 mock admin 抹掉，避免「未登录看到管理员名片」

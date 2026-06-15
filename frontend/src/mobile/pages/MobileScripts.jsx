@@ -9,6 +9,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Icon } from '../icons.jsx';
 import { usePlatformData } from '../../platform-app.jsx';
+import { isCredentialsError } from '../../lib/creds.js';
 
 /* ─── 小工具 ─────────────────────────────────────── */
 const fmtWan = (w) => {
@@ -777,7 +778,7 @@ function ScriptDetailView({ script, saves, embedStatus, currentUserId, onBack, o
       const r = await fetch(`${window.__API_BASE || ''}/api/scripts/${script.id}/embed`, { method: 'POST', credentials: 'include' });
       const j = await r.json();
       if (j.ok === false) {
-        if (j.code === 'credentials_required' || j.error_key === 'credentials_required') {
+        if (isCredentialsError(j)) {
           window.__apiToast?.('未配置向量嵌入模型，请先在设置中配置 RAG / Embedding 模型', { kind: 'warn', duration: 7000 });
         } else {
           window.__apiToast?.(j.error || '向量化启动失败', { kind: 'danger' });
@@ -1121,7 +1122,7 @@ function ImportView({ onBack }) {
         budget: estimate,
       });
       if (!pipelineResp || pipelineResp.ok === false || !pipelineResp.job_id) {
-        if (pipelineResp?.code === 'credentials_required' || pipelineResp?.needs_credentials) {
+        if (isCredentialsError(pipelineResp)) {
           window.__apiToast?.('未配置 LLM API Key，请先在设置中配置，剧本已导入（章节已创建）', { kind: 'warn', duration: 7000 });
           setJob({ status: 'paused_credentials', title: sc.title || title, script_id: sc.id });
           try { window.dispatchEvent(new CustomEvent('rpg-scripts-updated')); } catch (_) {}

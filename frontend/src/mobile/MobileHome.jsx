@@ -10,7 +10,10 @@ const fmtWan = (w) => {
   const n = Number(w) || 0;
   return n > 0 ? (n / 10000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + ' 万字' : '—';
 };
-const fmtN = (n) => (n == null ? '—' : (typeof n === 'number' ? n.toLocaleString() : String(n)));
+// null 安全千分位统一到 window.__fmt.n(data-loader.js),保留本地兜底。
+const fmtN = (n) => (window.__fmt && window.__fmt.n)
+  ? window.__fmt.n(n)
+  : (n == null ? '—' : (typeof n === 'number' ? n.toLocaleString() : String(n)));
 
 export function MobileHome({ nav }) {
   const platform = usePlatformData();

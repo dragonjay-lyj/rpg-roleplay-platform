@@ -27,6 +27,7 @@ import { TavernImportModal, UserCardsView } from './cards.jsx';
 import { ModelParamsSection } from './settings.jsx';
 import AgentModelPicker from '../components/AgentModelPicker.jsx';
 import ModelConfigInterceptModal, { capConfig } from '../components/ModelConfigInterceptModal.jsx';
+import { isCredentialsError } from '../lib/creds.js';
 import {
   TavernChatItem, TavernChatArea, TwoCardDrawer, ConfirmModal, RenameModal,
 } from '../tavern-app.jsx';
@@ -370,7 +371,7 @@ export default function TavernPage() {
     rc.runId = runId; rc.stopped = false;
     const isCurrentRun = () => rc.runId === runId;
 
-    const ts = new Date().toLocaleTimeString().slice(0, 5);
+    const ts = (window.__fmt && window.__fmt.nowHHMM) ? window.__fmt.nowHHMM() : new Date().toLocaleTimeString().slice(0, 5);
     setHistory((h) => [...h, { role: 'user', content: playerText, ts, attachments: sentAttachments.length ? sentAttachments : undefined }]);
     setLastPlayerText(playerText);
     setNeedsCreds(false);   // 新一轮开始,撤掉「缺 key」引导卡片
@@ -562,7 +563,7 @@ export default function TavernPage() {
           const realMsg = (data && (data.message || data.detail || data.error)) || '';
           setRunning(false);
           // Item 3:「发消息时没 key」→ 内联引导卡片(非普通报错红条),让用户就地配 LLM key 再重试。
-          if (/credentials_required|needs_credentials/i.test(String(realMsg))) {
+          if (isCredentialsError(realMsg)) {
             setNeedsCreds(true);
             setHasError(false);
             window.__apiToast?.('需要配置模型 Key', { kind: 'warn', detail: '请先添加一把对话模型的 API Key,再重试。', duration: 4500 });

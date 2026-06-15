@@ -788,7 +788,7 @@ export default function TavernApp() {
     rc.runId = runId; rc.stopped = false;
     const isCurrentRun = () => rc.runId === runId;
 
-    const ts = new Date().toLocaleTimeString().slice(0, 5);
+    const ts = (window.__fmt && window.__fmt.nowHHMM) ? window.__fmt.nowHHMM() : new Date().toLocaleTimeString().slice(0, 5);
     setHistory((h) => [...h, { role: 'user', content: playerText, ts }]);
     setLastPlayerText(playerText);
     setText('');

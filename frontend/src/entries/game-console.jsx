@@ -794,7 +794,7 @@ function App() {
     const runId = (runRef.current.runId || 0) + 1;
     runRef.current.runId = runId;
     const isCurrentRun = () => runRef.current.runId === runId;
-    const ts = new Date().toLocaleTimeString().slice(0, 5);
+    const ts = (window.__fmt && window.__fmt.nowHHMM) ? window.__fmt.nowHHMM() : new Date().toLocaleTimeString().slice(0, 5);
     const sentAttachments = attachments;
     setHistory((h) => [...h, { role: 'user', content: playerText, ts, attachments: sentAttachments }]);
     setLastPlayerText(playerText);

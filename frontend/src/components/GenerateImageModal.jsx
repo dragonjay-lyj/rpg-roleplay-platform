@@ -9,6 +9,7 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import AgentModelPicker from './AgentModelPicker.jsx';
 import ImageSizePicker from './ImageSizePicker.jsx';
+import { isCredentialsError } from '../lib/creds.js';
 
 /* GenerateImageModal — AI 生图弹窗，复用 CSModal + AgentModelPicker 范式。
 
@@ -86,8 +87,7 @@ export default function GenerateImageModal({
       if (status === 'failed') {
         setBusy(false);
         const errMsg = res.error || '生成失败';
-        const isCredsMissing = typeof errMsg === 'string'
-          && (errMsg.includes('credentials_required') || errMsg.includes('needs_credentials'));
+        const isCredsMissing = isCredentialsError(errMsg);
         if (isCredsMissing) {
           setCredsMissing(true);
           setError('请先在设置中配置该 Provider 的 API Key，再重试。');
@@ -141,8 +141,7 @@ export default function GenerateImageModal({
       const errMsg = (e && e.message) || '请求失败';
       const payload = e && e.payload;
       const detail = (payload && (payload.detail || payload.error)) || errMsg;
-      const isCredsMissing = typeof detail === 'string'
-        && (detail.includes('credentials_required') || detail.includes('needs_credentials'));
+      const isCredsMissing = isCredentialsError(e) || isCredentialsError(detail);
       if (isCredsMissing) {
         setCredsMissing(true);
         setError('请先在设置中配置该 Provider 的 API Key，再重试。');

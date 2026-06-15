@@ -16,7 +16,9 @@ const fmtWan = (n) => {
   if (!v) return '—';
   return v >= 10000 ? (v / 10000).toFixed(1).replace(/\.0$/, '') + ' 万' : v.toLocaleString();
 };
+// 统一到 window.__fmt.date(data-loader.js;YYYY-MM-DD),保留本地兜底。
 const fmtDate = (iso) => {
+  if (window.__fmt && window.__fmt.date) return window.__fmt.date(iso);
   if (!iso) return '—';
   try { return new Date(iso).toISOString().slice(0, 10); } catch { return '—'; }
 };

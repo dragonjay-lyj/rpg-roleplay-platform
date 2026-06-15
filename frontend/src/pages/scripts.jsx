@@ -13,6 +13,8 @@ import { CardEditModal, cardSnippet, npcToUserCardBody } from './cards.jsx';
 import { NewGameModal } from './saves.jsx';
 import { ScriptReview } from './script-review.jsx';
 import { WorldbookEditorView } from './script-edit-worldbook.jsx';
+import { credApiIdSet } from '../components/catalog-helpers.js';
+import { isCredentialsError } from '../lib/creds.js';
 // phase_rebuild_panel: 模块矩阵重做面板
 import { useScriptRebuild, ModuleRebuildPanel } from './script-modules-panel.jsx';
 import AgentModelPicker from '../components/AgentModelPicker.jsx';
@@ -96,15 +98,9 @@ function scriptPlayBlockReason(script, t) {
   return "";
 }
 
-function isCredentialsRequiredError(err) {
-  const payload = err?.payload || {};
-  return (
-    err?.code === "credentials_required"
-    || payload.code === "credentials_required"
-    || payload.error_key === "credentials_required"
-    || payload.needs_credentials === true
-  );
-}
+// 统一到共享 isCredentialsError(lib/creds.js):它检测同样的 code/error_key/needs_credentials
+// (含 payload)并额外覆盖错误信息字符串里夹带的信号,是原实现的超集。保留本地别名以免改全部调用点。
+const isCredentialsRequiredError = isCredentialsError;
 
 function ScriptPreviewModal({ open, busy, data, rule, onClose, onRetryRule, onConfirm }) {
   const { t } = useTranslation();
@@ -564,8 +560,13 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
 
   useEffectPL(() => {
     setWb(null); setNpc(null); setTl(null); setOv(null);
-    setTab('overview'); setHistoryOpen(false); setForkConfirm(false);
+    // 若有 pendingTab 跳转(列表"状态"下拉触发),别用 overview 覆盖它 —
+    // pendingTab effect 与本 reset effect 在 s.id 变化时会同帧触发,
+    // 后者若无条件 setTab('overview') 会盖掉前者设的目标 tab。
+    if (!pendingTab) setTab('overview');
+    setHistoryOpen(false); setForkConfirm(false);
     setCoverUrl(s.cover_image_url || null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.id]);
 
   const isOwner = currentUserId && s.owner_id === currentUserId;
@@ -2165,14 +2166,7 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
         const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
         setExtractApis(Array.isArray(list) ? list : []);
         // AgentPlatform 是 Vertex 的 SA 凭证 — UI 里用 vertex_ai
-        const ids = new Set();
-        for (const c of (creds?.items || creds?.credentials || [])) {
-          if (c.enabled === false) continue;
-          if (!(c.has_credential || c.has_key || c.key_hint !== undefined)) continue;
-          const aid = (c.api_id || c.id || '').trim();
-          ids.add(aid === 'AgentPlatform' ? 'vertex_ai' : aid);
-        }
-        setCredApiIds(ids);
+        setCredApiIds(credApiIdSet(creds));
         const p = (profile && profile.preferences) || {};
         // 默认值优先级:用户 prefs > deepseek(如果已配) > 用户第一个已配的 provider
         const preferred = p['extractor.api_id']

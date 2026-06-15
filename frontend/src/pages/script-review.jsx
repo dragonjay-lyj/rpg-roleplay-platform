@@ -61,7 +61,9 @@ function ReviewStatusBanner({ scriptId, status, busy, onChange }) {
   const isReviewed = status?.review_status === 'reviewed';
   const reviewedAt = status?.reviewed_at;
   const reviewedAtLabel = reviewedAt
-    ? new Date(reviewedAt).toLocaleString('zh-CN', { hour12: false })
+    ? ((window.__fmt && window.__fmt.time)
+        ? window.__fmt.time(reviewedAt)
+        : new Date(reviewedAt).toLocaleString('zh-CN', { hour12: false }))
     : null;
   return (
     <div style={{

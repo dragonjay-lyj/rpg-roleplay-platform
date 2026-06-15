@@ -3,6 +3,7 @@ import CSModal from '@cloudscape-design/components/modal';
 import AgentModelPicker from './AgentModelPicker.jsx';
 import MediaUploadZone from './MediaUploadZone.jsx';
 import ImageSizePicker from './ImageSizePicker.jsx';
+import { isCredentialsError } from '../lib/creds.js';
 
 /* MediaStudio — 统一图片来源：① AI 生成 ② 上传(拖拽/粘贴/点击) ③ 从图库选。
    一个优雅的流替代散落的"AI生成 / 上传"按钮。拿到最终 URL 后 onApplied(url)。
@@ -82,7 +83,7 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
     setErr(''); setBusy('generating');
     try {
       const r = await api.images.generate({ prompt: prompt.trim(), kind, api_id: sel.api_id, model: sel.model, attach, size: size || undefined });
-      if (r && (r.needs_credentials || r.code === 'credentials_required')) return fail('credentials_required');
+      if (isCredentialsError(r)) return fail('credentials_required');
       if (r && r.code === 'quota_exceeded') return fail('今日生图次数已达上限');
       if (r && r.image_id) pollImage(r.image_id);
       else fail(r && r.error);

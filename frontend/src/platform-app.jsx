@@ -38,6 +38,7 @@ import GenerateImageModal from './components/GenerateImageModal.jsx';
 import GlobalTaskFloater from './components/GlobalTaskFloater.jsx';
 import MediaStudio from './components/MediaStudio.jsx';
 import FileLibrary from './components/FileLibrary.jsx';
+import { credApiIdSet } from './components/catalog-helpers.js';
 // Cloudscape shell(AWS 控制台架构 + 暖色主题)
 import CSTopNavigation from '@cloudscape-design/components/top-navigation';
 import CSAppLayout from '@cloudscape-design/components/app-layout';
@@ -705,13 +706,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
         if (cancelled) return;
         const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
         // 只保留用户已配凭据的 provider(AgentPlatform→vertex_ai canonical,与 AgentModelPicker 一致)。
-        const credIds = new Set();
-        for (const c of (creds?.items || creds?.credentials || [])) {
-          if (c.enabled === false) continue;
-          if (!(c.has_credential || c.has_key || c.key_hint !== undefined)) continue;
-          const aid = (c.api_id || c.id || '').trim();
-          credIds.add(aid === 'AgentPlatform' ? 'vertex_ai' : aid);
-        }
+        const credIds = credApiIdSet(creds);
         const filtered = (Array.isArray(list) ? list : []).filter(a => credIds.has((a.api_id || a.id || '').trim()));
         setModelCatalog(filtered);
       } catch (_) { if (!cancelled) setModelCatalog([]); }
@@ -1205,21 +1200,14 @@ function MeOverview() {
     if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + " 万";
     return n.toLocaleString();
   };
+  // fmtDate / fmtAgo 统一到 window.__fmt(data-loader.js)。fmtAgo 原本就在
+  // window.__fmt.ago 存在时直接委派(运行时总成立),此处去掉死的本地兜底。
   const fmtDate = (iso) => {
+    if (window.__fmt && window.__fmt.date) return window.__fmt.date(iso);
     if (!iso) return "—";
     try { return new Date(iso).toISOString().slice(0, 10); } catch { return "—"; }
   };
-  const fmtAgo = (iso) => {
-    if (!iso) return "—";
-    if (window.__fmt && window.__fmt.ago) return window.__fmt.ago(iso);
-    try {
-      const ms = Date.now() - new Date(iso).getTime();
-      if (ms < 60_000) return "刚刚";
-      if (ms < 3600_000) return Math.floor(ms / 60_000) + " 分钟前";
-      if (ms < 86400_000) return Math.floor(ms / 3600_000) + " 小时前";
-      return Math.floor(ms / 86400_000) + " 天前";
-    } catch { return "—"; }
-  };
+  const fmtAgo = (iso) => (window.__fmt && window.__fmt.ago) ? window.__fmt.ago(iso) : "—";
   const regAt = fmtDate(user.created_at);
   const lastLoginAgo = fmtAgo(meStats?.last_login_at);
   const totalRounds = meStats?.total_rounds;
@@ -2221,7 +2209,10 @@ function ProfilePage() {
   const user = useReactiveUser();  // task 13: 保存资料后即时同步显示名/简介
   // task 12：以真实数组长度为最权威源；data-loader 已把 stats.* 改为
   // 真实值/null，但这里再做一层兜底，避免设计预览模式 (offline) 残留的 mock 12 漏到 UI。
-  const fmtN = (n) => (n == null ? "—" : (typeof n === "number" ? n.toLocaleString() : String(n)));
+  // null 安全千分位统一到 window.__fmt.n(注意:本组件局部版,非本文件导出的 K/M 缩写版)。
+  const fmtN = (n) => (window.__fmt && window.__fmt.n)
+    ? window.__fmt.n(n)
+    : (n == null ? "—" : (typeof n === "number" ? n.toLocaleString() : String(n)));
   const realScripts = Array.isArray(scripts) ? scripts : [];
   // 首页「继续《》」+「最近游玩」只列游戏存档;酒馆对话从 #tavern 页(或下方空态输入框)进入,
   // 不混进游戏存档列表(否则点「继续」会离奇进游戏台)。
@@ -3513,11 +3504,12 @@ function CapPage({ kind }) {
             _raw: s,
           }));
         }
+        if (cancelled) return;
         setItems(list);
       } catch (e) {
-        setErr(e?.message || "拉取失败");
+        if (!cancelled) setErr(e?.message || "拉取失败");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -4294,7 +4286,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     const check = () => {
       const u = _userState || _initialUser();
       // 已登录且从未 dismiss 过，并且页面确实是从后端拿的真实 user（有 id）
-      if (u && u.id && u.welcome_dismissed_at === null) {
+      if (u && u.id && u.welcome_dismissed_at == null) {
         setWelcomeFirstTime(true);
         setWelcomeOpen(true);
       }
@@ -4328,6 +4320,12 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             action: { label: '查看', onClick: () => plNavigate('feedback') },
           });
         }
+        // 发完 toast 立刻把本次拿到的最大 id 推进 last-seen,避免刷新重弹;
+        // 与 FeedbackDrawer 的写入路径一致(都只往前推不往后退)。
+        try {
+          const maxId = Math.max(0, ...(data.items || []).map(it => it.id || 0));
+          if (maxId > lastSeen) localStorage.setItem('feedback_last_seen_id', String(maxId));
+        } catch (_) {}
       } catch (_) {}
     })();
     return () => { cancelled = true; };

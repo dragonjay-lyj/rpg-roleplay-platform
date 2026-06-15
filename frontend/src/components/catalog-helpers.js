@@ -83,10 +83,42 @@ export function normalizeProviderId(p) {
   return p;
 }
 
+/**
+ * 凭据 api_id → catalog api_id 归一化(与 normalizeProviderId 方向相反)。
+ * AgentPlatform 是 Vertex 的 SA 凭据,catalog 里用 canonical "vertex_ai"。
+ * @param {string | null | undefined} aid
+ * @returns {string}
+ */
+export function credentialToCatalogId(aid) {
+  return aid === "AgentPlatform" ? "vertex_ai" : aid;
+}
+
+/**
+ * 从凭据列表构建「已配置且启用」的 catalog api_id 去重 Set。
+ * 接受 creds.items / creds.credentials 数组(也可直接传数组)。
+ * 过滤掉 enabled===false 以及无凭据的条目,AgentPlatform→vertex_ai 归一化。
+ * @param {Array | { items?: Array, credentials?: Array } | null | undefined} creds
+ * @returns {Set<string>}
+ */
+export function credApiIdSet(creds) {
+  const list = Array.isArray(creds) ? creds : ((creds && (creds.items || creds.credentials)) || []);
+  const ids = new Set();
+  for (const c of list) {
+    if (!c) continue;
+    if (c.enabled === false) continue;
+    if (!(c.has_credential || c.has_key || c.key_hint !== undefined)) continue;
+    const aid = (c.api_id || c.id || "").trim();
+    ids.add(credentialToCatalogId(aid));
+  }
+  return ids;
+}
+
 // ── 全局挂载 (script-mode JSX 用) ────────────────────────────────────────────
 if (typeof window !== "undefined") {
   window.CAP_LABEL = CAP_LABEL;
   window.capFlags = capFlags;
   window.getCaps = getCaps;
   window.normalizeProviderId = normalizeProviderId;
+  window.credentialToCatalogId = credentialToCatalogId;
+  window.credApiIdSet = credApiIdSet;
 }

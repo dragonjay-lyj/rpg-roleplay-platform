@@ -22,7 +22,9 @@ import CSTextarea from '@cloudscape-design/components/textarea';
 import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 
 /* ── 通用工具 ─────────────────────────────────────────────────── */
+// 统一到 window.__fmt.time(data-loader.js;zh-CN 24h 制),保留本地别名免改调用点。
 function fmtTime(iso) {
+  if (window.__fmt && window.__fmt.time) return window.__fmt.time(iso);
   if (!iso) return '—';
   try { return new Date(iso).toLocaleString('zh-CN', { hour12: false }); } catch (_) { return iso; }
 }
