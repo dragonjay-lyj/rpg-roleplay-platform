@@ -1648,6 +1648,7 @@
         "btn_discard": "撤销",
         "batch_enable": "批量启用",
         "batch_disable": "批量禁用",
+        "batch_selected": "已选 {{n}} 条",
         "batch_delete": "批量删除",
         "batch_set_priority": "设优先级",
         "batch_priority_ph": "优先级",

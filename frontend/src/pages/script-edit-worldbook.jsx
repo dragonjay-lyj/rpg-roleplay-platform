@@ -29,6 +29,7 @@ import CSTextarea from '@cloudscape-design/components/textarea';
 import CSToggle from '@cloudscape-design/components/toggle';
 import CSTokenGroup from '@cloudscape-design/components/token-group';
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
+import DetailDrawer from '../components/DetailDrawer.jsx';
 
 const WB_PAGE_SIZE = 50;
 
@@ -404,18 +405,6 @@ export function WorldbookEditorView({ script }) {
       id: 'title',
       header: t('scripts.edit.worldbook.col_title'),
       sortingField: 'title',
-      editConfig: isOwner ? {
-        ariaLabel: t('scripts.edit.worldbook.col_title'),
-        editIconAriaLabel: t('common.edit'),
-        errorIconAriaLabel: t('common.error'),
-        editingCell: (item, { currentValue, setValue }) => (
-          <CSInput
-            autoFocus
-            value={currentValue ?? (item.title || item.keyword || item.name || item.key || '')}
-            onChange={({ detail }) => setValue(detail.value)}
-          />
-        ),
-      } : undefined,
       cell: (e) => (
         <div>
           <CSBox fontWeight="bold">{e.title || e.keyword || e.name || e.key || '—'}</CSBox>
@@ -446,19 +435,6 @@ export function WorldbookEditorView({ script }) {
       header: t('scripts.edit.worldbook.col_priority'),
       sortingField: 'priority',
       width: 100,
-      editConfig: isOwner ? {
-        ariaLabel: t('scripts.edit.worldbook.col_priority'),
-        editIconAriaLabel: t('common.edit'),
-        errorIconAriaLabel: t('common.error'),
-        editingCell: (item, { currentValue, setValue }) => (
-          <CSInput
-            type="number"
-            autoFocus
-            value={String(currentValue ?? (item.priority ?? 50))}
-            onChange={({ detail }) => setValue(detail.value)}
-          />
-        ),
-      } : undefined,
       cell: (e) => <CSBox>{e.priority ?? 50}</CSBox>,
     },
     {
@@ -466,20 +442,6 @@ export function WorldbookEditorView({ script }) {
       header: t('scripts.edit.worldbook.col_enabled'),
       sortingField: 'enabled',
       width: 100,
-      editConfig: isOwner ? {
-        ariaLabel: t('scripts.edit.worldbook.col_enabled'),
-        editIconAriaLabel: t('common.edit'),
-        errorIconAriaLabel: t('common.error'),
-        editingCell: (item, { currentValue, setValue }) => {
-          const val = currentValue !== undefined ? currentValue : (item.enabled !== false);
-          return (
-            <CSToggle
-              checked={val}
-              onChange={({ detail }) => setValue(detail.checked)}
-            />
-          );
-        },
-      } : undefined,
       cell: (e) => e.enabled !== false
         ? <CSStatusIndicator type="success">{t('common.enabled')}</CSStatusIndicator>
         : <CSStatusIndicator type="stopped">{t('common.disabled')}</CSStatusIndicator>,
@@ -488,8 +450,7 @@ export function WorldbookEditorView({ script }) {
       id: 'actions',
       header: '',
       minWidth: 110,
-      // 末尾的不是"编辑"(每列头自己已经有 inline-edit ✏),是"详情"— 打开
-      // drawer 看全条目所有字段。文案改"详情",图标用 ellipsis 避免跟列头 ✏ 撞
+      // 点「详情」从右侧滑出抽屉编辑全字段(行内编辑铅笔已去掉,编辑统一在抽屉)。
       cell: (e) => (
         <span style={{ whiteSpace: 'nowrap' }}>
           <CSButton
@@ -528,62 +489,51 @@ export function WorldbookEditorView({ script }) {
       counter={`(${filtered.length})`}
       description={t('scripts.edit.worldbook.header_desc')}
       actions={
-        <CSSpaceBetween direction="horizontal" size="xs">
-          {isOwner && selectedItems.length > 0 && (
-            <>
-              <CSButton
-                iconName="status-positive"
-                loading={batching}
-                onClick={() => onBatchEnable(true)}
-              >
-                {t('scripts.edit.worldbook.batch_enable')}
-              </CSButton>
-              <CSButton
-                iconName="status-negative"
-                loading={batching}
-                onClick={() => onBatchEnable(false)}
-              >
-                {t('scripts.edit.worldbook.batch_disable')}
-              </CSButton>
-              <div style={{ width: 88 }}>
-                <CSInput
-                  type="number"
-                  value={batchPriority}
-                  placeholder={t('scripts.edit.worldbook.batch_priority_ph')}
-                  onChange={({ detail }) => setBatchPriority(detail.value)}
-                />
-              </div>
-              <CSButton
-                iconName="edit"
-                loading={batching}
-                disabled={batchPriority === ''}
-                onClick={onBatchSetPriority}
-              >
-                {t('scripts.edit.worldbook.batch_set_priority')}
-              </CSButton>
-              <CSButton
-                iconName="remove"
-                loading={batching}
-                onClick={onBatchDelete}
-              >
-                {t('scripts.edit.worldbook.batch_delete')}
-              </CSButton>
-            </>
-          )}
-          {isOwner && (
-            <CSButton
-              variant="primary"
-              iconName="add-plus"
-              onClick={() => openPanel(null, true)}
-            >
-              {t('scripts.edit.worldbook.btn_new')}
-            </CSButton>
-          )}
-        </CSSpaceBetween>
+        isOwner && (
+          <CSButton
+            variant="primary"
+            iconName="add-plus"
+            onClick={() => openPanel(null, true)}
+          >
+            {t('scripts.edit.worldbook.btn_new')}
+          </CSButton>
+        )
       }
     >
       {t('scripts.edit.worldbook.title')}
     </CSHeader>
+  );
+
+  /* 批量操作工具条:仅选中条目时出现,独立一行不挤标题栏(避免折行)。 */
+  const selectionToolbar = isOwner && selectedItems.length > 0 && (
+    <div style={{
+      display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+      padding: '8px 12px', borderRadius: 8,
+      background: 'var(--info-soft, rgba(122,166,194,.10))',
+      border: '1px solid var(--line-soft, #2a2724)',
+    }}>
+      <CSBox fontWeight="bold">{t('scripts.edit.worldbook.batch_selected', { n: selectedItems.length, defaultValue: `已选 ${selectedItems.length} 条` })}</CSBox>
+      <CSButton iconName="status-positive" loading={batching} onClick={() => onBatchEnable(true)}>
+        {t('scripts.edit.worldbook.batch_enable')}
+      </CSButton>
+      <CSButton iconName="status-negative" loading={batching} onClick={() => onBatchEnable(false)}>
+        {t('scripts.edit.worldbook.batch_disable')}
+      </CSButton>
+      <div style={{ width: 96 }}>
+        <CSInput
+          type="number"
+          value={batchPriority}
+          placeholder={t('scripts.edit.worldbook.batch_priority_ph')}
+          onChange={({ detail }) => setBatchPriority(detail.value)}
+        />
+      </div>
+      <CSButton iconName="edit" loading={batching} disabled={batchPriority === ''} onClick={onBatchSetPriority}>
+        {t('scripts.edit.worldbook.batch_set_priority')}
+      </CSButton>
+      <CSButton iconName="remove" loading={batching} onClick={onBatchDelete}>
+        {t('scripts.edit.worldbook.batch_delete')}
+      </CSButton>
+    </div>
   );
 
   /* SplitPanel 内容 */
@@ -635,9 +585,9 @@ export function WorldbookEditorView({ script }) {
         )}
       </CSSpaceBetween>
 
-      {/* 表单字段 */}
-      <CSColumnLayout columns={2} borders="inner">
-        {/* 左侧:title + content */}
+      {/* 表单字段(抽屉单列竖排,适配窄宽) */}
+      <CSColumnLayout columns={1}>
+        {/* title + content */}
         <CSSpaceBetween size="s">
           <CSFormField label={t('scripts.edit.worldbook.field_title')}>
             <CSInput
@@ -656,7 +606,7 @@ export function WorldbookEditorView({ script }) {
           </CSFormField>
         </CSSpaceBetween>
 
-        {/* 右侧:priority + enabled + tags */}
+        {/* priority + enabled + tags */}
         <CSSpaceBetween size="s">
           <CSFormField label={t('scripts.edit.worldbook.field_priority')}>
             <CSInput
@@ -719,95 +669,67 @@ export function WorldbookEditorView({ script }) {
   return (
     <CSSpaceBetween size="m">
       {readonlyBanner}
+      {selectionToolbar}
 
-      {/* width:100% + minWidth:0 给 flex 行一个**确定宽度**:否则容器随内容收缩,内联编辑某格时
-          那格变窄输入框 → 表格 intrinsic 内容宽变小 → flex:1 1 0 的表格区被压回 minWidth(560)
-          = 用户反馈「激活编辑时 UI 宽度异常缩小」。确定宽度后 flex:1 始终撑满,不随内容抖动。 */}
-      <div style={{ display: 'flex', gap: 16, minHeight: 0, width: '100%', minWidth: 0 }}>
-        {/* ── 主表格区 ── */}
-        {/* minWidth: 560 防止右侧面板展开时列宽被挤压到无法阅读(行已有确定 width:100%,不再随
-            内容收缩,故 minWidth 不会再被内联编辑触发误压) */}
-        <div style={{ flex: '1 1 0', minWidth: 560, overflow: 'auto' }}>
-          <CSTable
-            variant="container"
-            stickyHeader
-            trackBy="id"
-            selectionType="multi"
-            loading={loading}
-            loadingText={t('scripts.editor.loading_worldbook')}
-            items={paged}
-            selectedItems={selectedItems}
-            onSelectionChange={({ detail }) => onRowSelect(detail.selectedItems)}
-            onRowClick={({ detail }) => openPanel(detail.item, false)}
-            submitEdit={onSubmitEdit}
-            sortingColumn={columnDefinitions.find(c => c.id === sortCol)}
-            sortingDescending={!sortAsc}
-            onSortingChange={({ detail }) => {
-              setSortCol(detail.sortingColumn?.id || 'priority');
-              setSortAsc(!detail.isDescending);
-            }}
-            header={tableHeader}
-            filter={
-              <div style={{ maxWidth: 360 }}>
-                <CSTextFilter
-                  filteringText={query}
-                  filteringPlaceholder={t('scripts.edit.worldbook.search_placeholder')}
-                  onChange={({ detail }) => setQuery(detail.filteringText)}
-                />
-              </div>
-            }
-            pagination={
-              pageCount > 1 ? (
-                <CSPagination
-                  currentPageIndex={page}
-                  pagesCount={pageCount}
-                  onChange={({ detail }) => setPage(detail.currentPageIndex)}
-                />
-              ) : undefined
-            }
-            columnDefinitions={columnDefinitions}
-            wrapLines
-            empty={
-              <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
-                {query ? t('scripts.edit.worldbook.empty_search') : t('scripts.editor.wb_empty')}
-              </CSBox>
-            }
-          />
-        </div>
-
-        {/* ── 右侧编辑面板(自绘 div,不依赖 AppLayout)──
-            原用 Cloudscape SplitPanel 独立渲染。SplitPanel 只能在 AppLayout 的 splitPanel 槽内工作;
-            前端依赖升级(d61542c29:React 19 + Cloudscape)后,脱离 AppLayout 上下文渲染即崩 →
-            一点「新建/详情」就让整个世界书编辑器失活(反馈·行者无疆:新建条目/详情无反应、
-            启用栏点确认无反应)。改为自绘面板,纯 div + CSS 变量,稳定可靠。 */}
-        {panelOpen && draft && (
-          <div style={{
-            width: 480, flexShrink: 0, alignSelf: 'flex-start',
-            border: '1px solid var(--line, #36322d)', borderRadius: 8,
-            background: 'var(--panel, #211f1d)', overflow: 'hidden',
-            display: 'flex', flexDirection: 'column', maxHeight: '78vh',
-          }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
-              borderBottom: '1px solid var(--line-soft, #2a2724)', background: 'var(--bg-deep, #131211)',
-            }}>
-              <span style={{ fontWeight: 600, fontSize: 13.5, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {isNew
-                  ? t('scripts.edit.worldbook.panel_title_new')
-                  : (draft.title || t('scripts.edit.worldbook.panel_title_edit'))}
-              </span>
-              <button
-                onClick={closePanel}
-                aria-label={t('common.close')}
-                style={{ background: 'none', border: 'none', color: 'var(--muted, #968f85)', fontSize: 18, lineHeight: 1, cursor: 'pointer', padding: '0 6px' }}
-              >×</button>
-            </div>
-            <div style={{ padding: 14, overflowY: 'auto' }}>
-              {splitPanelContent}
-            </div>
+      {/* 全宽表格:详情编辑改成右侧覆盖抽屉(见下),表格不再被侧面板挤压,
+          列头不再换行 / 不再被压窄。stickyHeader 让列头随滚动吸顶不跑。 */}
+      <CSTable
+        variant="container"
+        stickyHeader
+        trackBy="id"
+        selectionType="multi"
+        loading={loading}
+        loadingText={t('scripts.editor.loading_worldbook')}
+        items={paged}
+        selectedItems={selectedItems}
+        onSelectionChange={({ detail }) => onRowSelect(detail.selectedItems)}
+        onRowClick={({ detail }) => openPanel(detail.item, false)}
+        sortingColumn={columnDefinitions.find(c => c.id === sortCol)}
+        sortingDescending={!sortAsc}
+        onSortingChange={({ detail }) => {
+          setSortCol(detail.sortingColumn?.id || 'priority');
+          setSortAsc(!detail.isDescending);
+        }}
+        header={tableHeader}
+        filter={
+          <div style={{ maxWidth: 360 }}>
+            <CSTextFilter
+              filteringText={query}
+              filteringPlaceholder={t('scripts.edit.worldbook.search_placeholder')}
+              onChange={({ detail }) => setQuery(detail.filteringText)}
+            />
           </div>
-        )}
-      </div>
+        }
+        pagination={
+          pageCount > 1 ? (
+            <CSPagination
+              currentPageIndex={page}
+              pagesCount={pageCount}
+              onChange={({ detail }) => setPage(detail.currentPageIndex)}
+            />
+          ) : undefined
+        }
+        columnDefinitions={columnDefinitions}
+        wrapLines
+        empty={
+          <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
+            {query ? t('scripts.edit.worldbook.empty_search') : t('scripts.editor.wb_empty')}
+          </CSBox>
+        }
+      />
+
+      {/* ── 右侧覆盖抽屉(替代 Cloudscape SplitPanel,共用 DetailDrawer):固定宽、无伸缩手柄、
+          覆盖在内容上、不挤压表格。点遮罩或 ✕ 关闭。 ── */}
+      <DetailDrawer
+        open={panelOpen && !!draft}
+        title={isNew
+          ? t('scripts.edit.worldbook.panel_title_new')
+          : (draft?.title || t('scripts.edit.worldbook.panel_title_edit'))}
+        onClose={closePanel}
+        closeLabel={t('common.close')}
+      >
+        {splitPanelContent}
+      </DetailDrawer>
     </CSSpaceBetween>
   );
 }

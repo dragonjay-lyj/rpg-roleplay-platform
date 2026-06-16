@@ -1556,6 +1556,7 @@
         "btn_discard": "Discard",
         "batch_enable": "Enable Selected",
         "batch_disable": "Disable Selected",
+        "batch_selected": "{{n}} selected",
         "batch_delete": "Delete Selected",
         "batch_set_priority": "Set Priority",
         "batch_priority_ph": "Priority",
