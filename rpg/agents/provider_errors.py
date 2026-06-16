@@ -37,6 +37,20 @@ _RATELIMIT_MARKERS = (
     "quota exceeded",                # Google "Quota exceeded for quota metric ..."
 )
 
+# 上下文超长:本回合提示词(历史+世界书+设定)超过所选模型的上下文窗口。换大上下文模型/精简
+# 注入才能解决,重试无用。HTTP 多为 400,但 400 太泛(空 assistant 等也是 400),只认特征短语,
+# 不靠裸 400 判定,避免误吞其他 400。
+_CONTEXT_MARKERS = (
+    "maximum context length",            # OpenAI / OpenRouter "maximum context length is N tokens"
+    "context_length_exceeded",           # OpenAI error code
+    "reduce the length of",              # OpenRouter "Please reduce the length of either one"
+    "prompt is too long",                # Anthropic
+    "exceed context limit",              # Anthropic "input length and max_tokens exceed context limit"
+    "maximum number of tokens allowed",  # Google "input token count exceeds the maximum number of tokens allowed"
+    "exceeds the maximum context",       # 通用
+    "string too long",                   # 个别中转站对超长输入的措辞
+)
+
 
 def _http_status(exc: Exception) -> int | None:
     """从 SDK 异常上取 HTTP 状态码。
@@ -54,7 +68,7 @@ def _http_status(exc: Exception) -> int | None:
 def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
     """已知提供商错误 → (category, 客户端安全文案);未知返回 None(调用方走各自兜底)。
 
-    category ∈ {"balance", "auth", "ratelimit"}。文案不含 error_id,调用方自行追加。
+    category ∈ {"balance", "auth", "ratelimit", "context"}。文案不含 error_id,调用方自行追加。
     """
     raw_lower = str(exc).strip().lower()
     status = _http_status(exc)
@@ -70,4 +84,10 @@ def classify_provider_error(exc: Exception) -> tuple[str, str] | None:
         return ("ratelimit",
                 "当前模型请求过于频繁（提供商限流）。"
                 "请稍候片刻再重试，或切换到其他模型。")
+    # 上下文超长放在限流之后:它是 400 + 特征短语,与上面三类(402/401/429)不重叠。
+    if any(m in raw_lower for m in _CONTEXT_MARKERS):
+        return ("context",
+                "本回合的剧情上下文（历史 + 世界书 + 设定）超过了所选模型的上下文长度上限，"
+                "重试也无法恢复。请到「设置 → 模型 / API 设置」换用上下文窗口更大的模型"
+                "（例如百万级上下文的 Gemini 2.5 Flash / Pro 等），或精简世界书 / 历史注入后再试。")
     return None
