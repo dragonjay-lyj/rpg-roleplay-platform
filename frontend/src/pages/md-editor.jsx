@@ -402,7 +402,11 @@ async function saveNodeContent(kind, sid, id, content, original) {
     return;
   }
   if (kind === 'card') {
-    await A.cards.scriptUpsert(sid, { id, ...diff });
+    // 后端 upsert_character_card 是「全量覆盖」(缺字段→清空,含 SCHEMA 不覆盖的 avatar/metadata/
+    // token_budget/priority 等)。只发 diff 会抹掉这些 → 重新拉全卡、叠加本次编辑的可写字段、整卡回写。
+    const full = await A.cards.scriptGet(sid, id);
+    const base = (full && full.card) ? full.card : (full || {});
+    await A.cards.scriptUpsert(sid, { ...base, id, ...cur });
     return;
   }
   if (kind === 'worldbook') {

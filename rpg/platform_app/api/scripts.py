@@ -309,7 +309,7 @@ async def api_script_timeline(script_id: int, user=Depends(require_user)):
         rows = db.execute(
             """
             select id, story_phase, story_time_label, chapter_min, chapter_max,
-                   chapter_count, sample_summary, confidence
+                   chapter_count, sample_summary, confidence, keywords, sample_title
             from script_timeline_anchors
             where script_id = %s
             order by chapter_min asc, id asc
@@ -329,6 +329,10 @@ async def api_script_timeline(script_id: int, user=Depends(require_user)):
             "chapter_count": r["chapter_count"],
             "sample_summary": r["sample_summary"],
             "confidence": float(r["confidence"] or 0),
+            # 编辑器锚点编辑需全字段回显,否则用户在「看似为空」的 keywords/sample_title 里输入
+            # 会静默覆盖 DB 真实值(审计 P0 数据丢失)。keywords 是 text[] → 原样返回数组。
+            "keywords": r["keywords"] or [],
+            "sample_title": r["sample_title"] or "",
         })
     phases = []
     for p, items in buckets.items():
