@@ -2,6 +2,7 @@
 // 把当前剧本 + 打开文件作为 page_context 传入,LLM 可用 script 级直写工具改库;destructive 工具走二次确认;
 // 写成功后回调 onWriteComplete 让编辑器刷新对应标签。设计 docs/design/N_md_editor.md §5。
 import React from 'react';
+import { Composer } from '../game-composer.jsx';
 
 const { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } = React;
 
@@ -52,6 +53,9 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const abortRef = useRef(null);
   // 三级权限(Q3):AI 改库的写入权限 read_only / review(默认) / full_access。持久化 editor.write_mode。
   const [writeMode, setWriteMode] = useState('review');
+  // 复用游戏聊天框 Composer 所需的浮层开关(只用权限/写模式浮层;模型/上下文环/斜杠/附件/生图在右栏全隐藏)。
+  const [showPerm, setShowPerm] = useState(false);
+  const togglePerm = useCallback(() => setShowPerm((v) => !v), []);
 
   useEffect(() => {
     (async () => {
@@ -65,8 +69,11 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   }, []);
 
   const changeWriteMode = useCallback(async (m) => {
-    setWriteMode(m);
-    try { await window.api?.me?.preferences?.({ 'editor.write_mode': m }); } catch (_) {}
+    // PermissionPopover 有 4 档(read_only/default/review/full_access),后端 console_assistant 写权限只认
+    // 3 档 → 把游戏里的 'default'(普通)归一到 'review'(审查后写),语义上最接近、且安全。
+    const mm = m === 'default' ? 'review' : m;
+    setWriteMode(mm);
+    try { await window.api?.me?.preferences?.({ 'editor.write_mode': mm }); } catch (_) {}
   }, []);
 
   useEffect(() => {
@@ -81,8 +88,8 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       ? `【${labelKind(activeTab.kind)}】「${activeTab.label}」(${activeTab.kind} id=${activeTab.id})`
       : '(未打开具体文件)';
     const note = activeTab
-      ? `用户正在 MD 编辑器编辑剧本 #${scriptId} 的 ${open_file}。可用 update_*/upsert_* 工具直接改并落库;改前先说清要改什么。`
-      : `用户在 MD 编辑器,当前剧本 #${scriptId},未打开具体文件。`;
+      ? `用户正在剧本编辑器编辑剧本 #${scriptId} 的 ${open_file}。可用 update_*/upsert_* 工具直接改并落库;改前先说清要改什么。`
+      : `用户在剧本编辑器,当前剧本 #${scriptId},未打开具体文件。`;
     // tab:'md-editor' 是后端 build_system_prompt 注入编辑器上下文块的触发标记(光有 script_id 不够)。
     return { script_id: scriptId, tab: 'md-editor', open_file, note };
   }, [scriptId, activeTab]);
@@ -202,17 +209,8 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   return (
     <div className="mde-agent">
       <div className="mde-agent-head">
-        <span className="mde-agent-head-title">AI 助手{activeTab ? ` · ${activeTab.label}` : ''}</span>
-        <select
-          className="mde-agent-wmode"
-          value={writeMode}
-          title="AI 改库的写入权限:只读=只给建议不写;审查=写前要你确认;直接写=AI 直接落库"
-          onChange={(e) => changeWriteMode(e.target.value)}
-        >
-          <option value="read_only">只读建议</option>
-          <option value="review">审查后写</option>
-          <option value="full_access">直接写</option>
-        </select>
+        <span className="mde-agent-head-icon">AI</span>
+        <span className="mde-agent-head-title">助手{activeTab ? ` · ${activeTab.label}` : ''}</span>
       </div>
       <div className="mde-agent-msgs" ref={scrollRef}>
         {messages.length === 0 && (
@@ -256,15 +254,26 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
           <span className="mde-agent-toolbar-hint">或在正文按 ⌘K</span>
         </div>
       )}
-      <div className="mde-agent-input">
-        <textarea
-          value={input}
-          placeholder={scriptId ? '让 AI 改这个剧本… / 或写续写指令配合上方按钮' : '先选剧本'}
-          disabled={!scriptId || busy}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
+      <div className="mde-agent-composer">
+        <Composer
+          text={input}
+          setText={setInput}
+          onSend={() => send()}
+          onStop={() => { try { abortRef.current?.abort(); } catch (_) {} }}
+          running={busy}
+          permission={writeMode}
+          setPermission={changeWriteMode}
+          showPerm={showPerm}
+          togglePerm={togglePerm}
+          gameState={null}
+          hideSlash
+          hideAttach
+          hideContinue
+          hideImageGen
+          hideModel
+          hideContextUsage
+          placeholder={scriptId ? '让 AI 改这个剧本…(改角色卡 / 世界书 / 正文)' : '先选剧本'}
         />
-        <button disabled={!scriptId || busy || !input.trim()} onClick={() => send()}>{busy ? '…' : '发送'}</button>
       </div>
     </div>
   );

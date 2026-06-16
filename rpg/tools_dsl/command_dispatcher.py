@@ -391,6 +391,12 @@ class ToolDispatcher:
             elif spec.scope == "user":
                 text = spec.executor(env.user_id, env.args)
             elif spec.scope == "script":
+                # 安全围栏(与 save 级对称, 纵深防御):script 级工具的 script_id 恒等于服务端
+                # 绑定且已 owner 校验的 env.script_id。**无条件覆盖** args 里 LLM/调用方可能伪造的
+                # script_id —— 当前各执行器靠 _resolve_sid(env 优先)+ 进库 script_owned 兜底已安全,
+                # 此覆盖杜绝「未来新增 script-write 工具忘记调 owner 闸」时 args[script_id] 伪造面重开。
+                if env.script_id is not None:
+                    env.args["script_id"] = env.script_id
                 text = spec.executor(env.user_id, env.script_id, env.args, state)
             else:  # save
                 # 安全围栏(防 LLM 跨档注入):save 级工具的 save_id 必须恒等于服务端绑定的

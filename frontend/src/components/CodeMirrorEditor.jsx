@@ -28,8 +28,48 @@ const warmTheme = EditorView.theme({
   '.cm-matchingBracket': { backgroundColor: 'rgba(122,166,194,.18)', outline: 'none' },
 }, { dark: true });
 
+// front-matter 冻结(交互层):保护 `---` 围栏 + 顶层字段的「键名」token,用户只能改值不能改键/破栏。
+// 不限制任何「值」编辑(标量值/数组项/多行块标量/嵌套对象都放行) —— 故对 YAML 数组(keys/aliases)、
+// sample_dialogue、canon.attrs 等多行值零误伤。新增/删除顶层字段(加项目)由保存时的键集校验兜底拦。
+function frontMatterEnd(doc) {
+  if (doc.lines < 2 || doc.line(1).text !== '---') return -1;
+  for (let i = 2; i <= doc.lines; i++) if (doc.line(i).text === '---') return doc.line(i).to;
+  return -1;   // 未闭合 → 视作无 front-matter
+}
+function frontMatterGuard() {
+  return EditorState.transactionFilter.of((tr) => {
+    if (!tr.docChanged) return tr;
+    if (tr.isUserEvent('undo') || tr.isUserEvent('redo')) return tr;   // 撤销/重做只会还原已许可的改动,放行
+    const doc = tr.startState.doc;
+    const fmEnd = frontMatterEnd(doc);
+    if (fmEnd < 0) return tr;                       // 无 front-matter(如纯正文章节无围栏)→ 不限制
+    let full = false;
+    tr.changes.iterChanges((fA, tA) => { if (fA === 0 && tA === doc.length) full = true; });
+    if (full) return tr;                            // 整篇替换(切标签/程序性 setValue)→ 放行
+    let ok = true;
+    tr.changes.iterChanges((fromA, toA) => {
+      if (!ok || fromA > fmEnd) return;            // 改动起点在正文区 → 放行
+      const a = doc.lineAt(fromA), b = doc.lineAt(Math.min(toA, doc.length));
+      for (let n = a.number; n <= b.number; n++) {
+        const ln = doc.line(n);
+        if (ln.text === '---') {                    // 围栏行:任何触及(含行首/行尾边界插入)都禁
+          if (fromA <= ln.to && toA >= ln.from) { ok = false; return; }
+          continue;
+        }
+        // 顶层字段行(顶格、非注释/数组项、含冒号)→ 保护 [行首, 冒号] 的键名 token(含行首边界插入)
+        if (/^[^\s#-][^:]*:/.test(ln.text)) {
+          const keyEnd = ln.from + ln.text.indexOf(':');   // 冒号绝对位置
+          if (fromA <= keyEnd && toA >= ln.from) { ok = false; return; }
+        }
+      }
+    });
+    return ok ? tr : [];
+  });
+}
+
 function baseExtensions(onChange, readOnly, getScriptId, getOnAccept, getChapterIndex) {
   return [
+    frontMatterGuard(),
     aiContinueExtension(),
     cmdKKeymap(getScriptId, getOnAccept, getChapterIndex),
     lineNumbers(),
@@ -77,6 +117,7 @@ export default function CodeMirrorEditor({ value, docKey, onChange, readOnly = f
     });
     viewRef.current = view;
     lastKeyRef.current = docKey;
+    if (import.meta.env?.DEV) { try { window.__mdeView = view; } catch (_) {} }   // 仅 DEV:e2e 测试句柄(生产构建剔除)
     onViewReadyRef.current?.(view);   // 暴露给侧栏 agent 的「续写到正文」用
     return () => { onViewReadyRef.current?.(null); view.destroy(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

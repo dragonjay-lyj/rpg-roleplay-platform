@@ -7,10 +7,24 @@ import './md-editor.css';
 import { lsGet, lsSet } from '../lib/storage.js';
 import CodeMirrorEditor from '../components/CodeMirrorEditor.jsx';
 import MdEditorAgent from '../components/MdEditorAgent.jsx';
-import { toMd, fromMd } from '../lib/md-serialize.js';
+import { toMd, fromMd, splitFrontMatter } from '../lib/md-serialize.js';
 import { runContinue } from '../lib/md-continue.js';
+import { undo, redo, selectAll } from '@codemirror/commands';
+import { openSearchPanel } from '@codemirror/search';
 
 const { useState, useEffect, useCallback, useRef } = React;
+
+// 顶栏图标(feather 风,单色 stroke=currentColor,非 emoji)。
+const TB_PATHS = {
+  undo: <><polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></>,
+  redo: <><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></>,
+  copy: <><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+  cut: <><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><line x1="20" y1="4" x2="8.12" y2="15.88" /><line x1="14.47" y1="14.48" x2="20" y2="20" /><line x1="8.12" y1="8.12" x2="12" y2="12" /></>,
+  paste: <><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><rect x="8" y="2" width="8" height="4" rx="1" ry="1" /></>,
+};
+const TbIcon = ({ name }) => (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{TB_PATHS[name]}</svg>
+);
 
 // 文件树节点类型 → 中文标签 + 排序。
 const NODE_GROUPS = [
@@ -401,7 +415,82 @@ export default function MdEditorPage() {
     // eslint-disable-next-line
   }, []);
 
-  const pickScript = (id) => { setScriptId(id); lsSet('mde.scriptId', id); setTabs([]); setActiveKey(null); };
+  const pickScript = (id) => { setScriptId(id); lsSet('mde.scriptId', id); setTabs([]); setActiveKey(null); setMenu(null); };
+
+  // ── 顶栏菜单 + 可拖拽分栏 ──────────────────────────────────────────────
+  const [menu, setMenu] = useState(null);   // 'ws' | 'file' | 'edit' | null
+  const panesRef = useRef(null);
+  const [leftW, setLeftW] = useState(() => { const n = Number(lsGet('mde.leftW', 240)); return n >= 150 && n <= 480 ? n : 240; });
+  const [rightW, setRightW] = useState(() => { const n = Number(lsGet('mde.rightW', 320)); return n >= 220 && n <= 560 ? n : 320; });
+  const dragRef = useRef(null);
+  const onSplitDown = (side) => (e) => {
+    e.preventDefault();
+    const startX = e.clientX, startLeft = leftW, startRight = rightW;
+    const move = (ev) => {
+      const dx = ev.clientX - startX;
+      const w = side === 'left'
+        ? Math.max(150, Math.min(480, startLeft + dx))
+        : Math.max(220, Math.min(560, startRight - dx));
+      panesRef.current?.style.setProperty(side === 'left' ? '--mde-left-w' : '--mde-right-w', w + 'px');
+      dragRef.current = { side, w };
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      document.body.style.cursor = ''; document.body.style.userSelect = '';
+      const d = dragRef.current; dragRef.current = null;
+      if (d) { if (d.side === 'left') { setLeftW(d.w); lsSet('mde.leftW', d.w); } else { setRightW(d.w); lsSet('mde.rightW', d.w); } }
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+  };
+
+  // 顶栏「编辑」操作:全部作用于当前 CodeMirror 视图(activeViewRef)。
+  const withView = useCallback((fn) => { const v = activeViewRef.current; if (!v) { toast('请先打开一个文件', { kind: 'warn', duration: 1400 }); return; } v.focus(); fn(v); }, []);
+  const doUndo = useCallback(() => withView((v) => undo(v)), [withView]);
+  const doRedo = useCallback(() => withView((v) => redo(v)), [withView]);
+  const doSelectAll = useCallback(() => withView((v) => selectAll(v)), [withView]);
+  const doFind = useCallback(() => withView((v) => openSearchPanel(v)), [withView]);
+  const doCopy = useCallback(() => withView(async (v) => { const s = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to); if (!s) return; try { await navigator.clipboard.writeText(s); } catch (_) { toast('复制失败,请用 ⌘C', { kind: 'warn' }); } }), [withView]);
+  const doCut = useCallback(() => withView(async (v) => { const sel = v.state.selection.main; const s = v.state.sliceDoc(sel.from, sel.to); if (!s) return; try { await navigator.clipboard.writeText(s); v.dispatch({ changes: { from: sel.from, to: sel.to } }); } catch (_) { toast('剪切失败,请用 ⌘X', { kind: 'warn' }); } }), [withView]);
+  const doPaste = useCallback(() => withView(async (v) => { try { const txt = await navigator.clipboard.readText(); if (!txt) return; const sel = v.state.selection.main; v.dispatch({ changes: { from: sel.from, to: sel.to, insert: txt }, selection: { anchor: sel.from + txt.length } }); } catch (_) { toast('粘贴失败,请用 ⌘V', { kind: 'warn' }); } }), [withView]);
+  const doGotoLine = useCallback(() => withView((v) => { const raw = window.prompt('转到行号:'); const n = Number(raw); if (!n || n < 1) return; const line = v.state.doc.line(Math.min(Math.floor(n), v.state.doc.lines)); v.dispatch({ selection: { anchor: line.from }, scrollIntoView: true }); }), [withView]);
+
+  // 文件菜单:重命名 / 删除当前剧本(严格 owner,后端 403 兜底)。
+  const renameScript = useCallback(async () => {
+    setMenu(null);
+    if (!scriptId) return;
+    const cur = (scripts || []).find((s) => s.id === scriptId);
+    const name = window.prompt('重命名剧本:', cur?.title || '');
+    if (name == null) return;
+    const t = name.trim(); if (!t) return;
+    try { await api().scripts.rename(scriptId, t); setScripts((prev) => (prev || []).map((s) => s.id === scriptId ? { ...s, title: t } : s)); toast('已重命名', { kind: 'ok', duration: 1200 }); }
+    catch (e) { toast('重命名失败', { kind: 'danger', detail: e?.message }); }
+  }, [scriptId, scripts]);
+  const deleteScript = useCallback(async () => {
+    setMenu(null);
+    if (!scriptId) return;
+    const cur = (scripts || []).find((s) => s.id === scriptId);
+    const ok = await (window.__confirm
+      ? window.__confirm({ title: '删除整个剧本?', message: `「${cur?.title || scriptId}」及其下所有存档都会被永久删除,不可恢复。`, danger: true, confirmText: '删除' })
+      : Promise.resolve(window.confirm('删除整个剧本?(连带其下所有存档,不可恢复)')));
+    if (!ok) return;
+    try {
+      await api().scripts.delete(scriptId, { force: true });
+      const rest = (scripts || []).filter((s) => s.id !== scriptId);
+      setScripts(rest);
+      if (rest[0]) pickScript(rest[0].id);
+      else { setScriptId(null); lsSet('mde.scriptId', null); setTabs([]); setActiveKey(null); }
+      toast('已删除剧本', { kind: 'ok', duration: 1400 });
+    } catch (e) { toast('删除失败', { kind: 'danger', detail: e?.message }); }
+  }, [scriptId, scripts]);
+
+  // 顶栏菜单:点击外部关闭。
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e) => { if (!e.target.closest?.('.mde-menuwrap')) setMenu(null); };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [menu]);
 
   // 作者优先:从零新建空白剧本 → 切到它(自动带第1章)。
   const createBlankScript = async () => {
@@ -544,24 +633,84 @@ export default function MdEditorPage() {
 
   return (
     <div className="mde-root">
-      {/* 顶栏:剧本选择 */}
+      {/* 顶栏:工作区 + 编辑图标 + 文件/编辑菜单 */}
       <div className="mde-topbar">
-        <span className="mde-brand">MD 编辑器</span>
-        <select className="mde-script-select" value={scriptId || ''} onChange={(e) => pickScript(Number(e.target.value) || e.target.value)}>
-          {scripts === null && <option>加载剧本…</option>}
-          {scripts && scripts.length === 0 && <option value="">（无可编辑剧本）</option>}
-          {(scripts || []).map((s) => <option key={s.id} value={s.id}>{s.title || `剧本 ${s.id}`}</option>)}
-        </select>
-        <button className="mde-newbtn" onClick={createBlankScript} title="从零创建空白剧本(作者优先,自带第1章)">+ 空白剧本</button>
-        {scriptId && <button className="mde-newbtn" onClick={addChapter} title="给当前剧本追加一章并打开">+ 章节</button>}
-        {active && active.dirty && <button className="mde-save" onClick={() => saveTab(active.key)} disabled={active.saving}>{active.saving ? '保存中…' : '保存 (⌘S)'}</button>}
+        {/* 工作区切换(剧本) */}
+        <div className="mde-menuwrap">
+          <button className="mde-ws" onClick={() => setMenu(menu === 'ws' ? null : 'ws')} title="切换工作区(剧本)">
+            <span className="mde-ws-kicker">工作区</span>
+            <span className="mde-ws-name">{(scripts || []).find((s) => s.id === scriptId)?.title || (scripts === null ? '加载中…' : '未选择')}</span>
+            <span className="mde-ws-caret">▾</span>
+          </button>
+          {menu === 'ws' && (
+            <div className="mde-menu mde-ws-menu">
+              {scripts === null && <div className="mde-menu-hint">加载剧本…</div>}
+              {scripts && scripts.length === 0 && <div className="mde-menu-hint">（无可编辑剧本）</div>}
+              {(scripts || []).map((s) => (
+                <button key={s.id} className={'mde-menu-item' + (s.id === scriptId ? ' on' : '')} onClick={() => pickScript(s.id)}>{s.title || `剧本 ${s.id}`}</button>
+              ))}
+              <div className="mde-menu-sep" />
+              <button className="mde-menu-item" onClick={() => { setMenu(null); createBlankScript(); }}>＋ 新建空白剧本</button>
+            </div>
+          )}
+        </div>
+
+        {/* 编辑操作图标组 */}
+        <div className="mde-tb-icons">
+          <button className="mde-tb-ic" title="撤销 ⌘Z" onClick={doUndo}><TbIcon name="undo" /></button>
+          <button className="mde-tb-ic" title="重做 ⌘⇧Z" onClick={doRedo}><TbIcon name="redo" /></button>
+          <span className="mde-tb-divider" />
+          <button className="mde-tb-ic" title="复制 ⌘C" onClick={doCopy}><TbIcon name="copy" /></button>
+          <button className="mde-tb-ic" title="剪切 ⌘X" onClick={doCut}><TbIcon name="cut" /></button>
+          <button className="mde-tb-ic" title="粘贴 ⌘V" onClick={doPaste}><TbIcon name="paste" /></button>
+        </div>
+
+        {/* 文件菜单 */}
+        <div className="mde-menuwrap">
+          <button className={'mde-menubtn' + (menu === 'file' ? ' on' : '')} onClick={() => setMenu(menu === 'file' ? null : 'file')}>文件</button>
+          {menu === 'file' && (
+            <div className="mde-menu">
+              <button className="mde-menu-item" disabled={!scriptId} onClick={() => { setMenu(null); addChapter(); }}>新建章节</button>
+              <button className="mde-menu-item" onClick={() => { setMenu(null); createBlankScript(); }}>新建空白剧本</button>
+              <button className="mde-menu-item" disabled={!scriptId} onClick={renameScript}>重命名剧本…</button>
+              <div className="mde-menu-sep" />
+              <button className="mde-menu-item danger" disabled={!scriptId} onClick={deleteScript}>删除当前剧本</button>
+            </div>
+          )}
+        </div>
+
+        {/* 编辑菜单 */}
+        <div className="mde-menuwrap">
+          <button className={'mde-menubtn' + (menu === 'edit' ? ' on' : '')} onClick={() => setMenu(menu === 'edit' ? null : 'edit')}>编辑</button>
+          {menu === 'edit' && (
+            <div className="mde-menu">
+              <button className="mde-menu-item" onClick={() => { setMenu(null); doUndo(); }}>撤销<span className="mde-menu-kbd">⌘Z</span></button>
+              <button className="mde-menu-item" onClick={() => { setMenu(null); doRedo(); }}>重做<span className="mde-menu-kbd">⌘⇧Z</span></button>
+              <div className="mde-menu-sep" />
+              <button className="mde-menu-item" onClick={() => { setMenu(null); doCopy(); }}>复制<span className="mde-menu-kbd">⌘C</span></button>
+              <button className="mde-menu-item" onClick={() => { setMenu(null); doCut(); }}>剪切<span className="mde-menu-kbd">⌘X</span></button>
+              <button className="mde-menu-item" onClick={() => { setMenu(null); doPaste(); }}>粘贴<span className="mde-menu-kbd">⌘V</span></button>
+              <div className="mde-menu-sep" />
+              <button className="mde-menu-item" onClick={() => { setMenu(null); doFind(); }}>查找<span className="mde-menu-kbd">⌘F</span></button>
+              <button className="mde-menu-item" onClick={() => { setMenu(null); doSelectAll(); }}>全选<span className="mde-menu-kbd">⌘A</span></button>
+              <button className="mde-menu-item" onClick={() => { setMenu(null); doGotoLine(); }}>转到行…</button>
+              <div className="mde-menu-sep" />
+              <button className="mde-menu-item" disabled={!active || !active.dirty} onClick={() => { setMenu(null); if (active) saveTab(active.key); }}>保存<span className="mde-menu-kbd">⌘S</span></button>
+            </div>
+          )}
+        </div>
+
+        <div className="mde-tb-spacer" />
+        {active && active.dirty && <button className="mde-save" onClick={() => saveTab(active.key)} disabled={active.saving}>{active.saving ? '保存中…' : '保存 ⌘S'}</button>}
       </div>
 
-      <div className="mde-panes">
+      <div className="mde-panes" ref={panesRef} style={{ '--mde-left-w': leftW + 'px', '--mde-right-w': rightW + 'px' }}>
         {/* 左:文件树 */}
         <aside className="mde-left">
           {scriptId ? <FileTree scriptId={scriptId} openNode={openNode} activeKey={activeKey} reloadKey={treeReloadKey} onMutate={onTreeMutate} /> : <div className="mde-tree-hint">先选剧本</div>}
         </aside>
+
+        <div className="mde-splitter mde-splitter-left" onPointerDown={onSplitDown('left')} title="拖拽调整左栏宽度" />
 
         {/* 中:标签 + 编辑器 */}
         <main className="mde-center">
@@ -584,6 +733,8 @@ export default function MdEditorPage() {
             </div>
           )}
         </main>
+
+        <div className="mde-splitter mde-splitter-right" onPointerDown={onSplitDown('right')} title="拖拽调整右栏宽度" />
 
         {/* 右:agent 直写面板(console_assistant SSE)+ 续写到正文 */}
         <aside className="mde-right">
@@ -644,6 +795,26 @@ async function loadRow(kind, sid, id) {
 // ── 节点内容 保存:fromMd(当前) vs fromMd(原始) 求 diff,只发改动字段 ──────────
 async function saveNodeContent(kind, sid, id, content, original) {
   const A = api();
+  // front-matter 结构冻结(权威闸):顶层字段集合不可增删改名,只能改值。编辑层 frontMatterGuard 已挡掉
+  // 改键名/破围栏的交互;此处兜底拦「新增/删除顶层字段」(加项目)—— 否则 fromMd 会静默丢弃非 schema 键,
+  // 用户加了字段保存后凭空消失,体验更差。差异化报错让用户知道哪个字段越界。
+  if (original != null) {
+    try {
+      const ka = Object.keys(splitFrontMatter(original).fm || {}).sort();
+      const kb = Object.keys(splitFrontMatter(content).fm || {}).sort();
+      if (ka.join('') !== kb.join('')) {
+        const added = kb.filter((k) => !ka.includes(k));
+        const removed = ka.filter((k) => !kb.includes(k));
+        const parts = [];
+        if (added.length) parts.push('新增了字段「' + added.join('、') + '」');
+        if (removed.length) parts.push('删除/改名了字段「' + removed.join('、') + '」');
+        throw new Error('front-matter 字段被冻结,只能改值不能增删字段:你' + parts.join(';') + '。请改回字段名,只编辑冒号后的值。');
+      }
+    } catch (e) {
+      if (e instanceof Error && /front-matter/.test(e.message)) throw e;
+      /* YAML 解析失败等:交给下面 fromMd 抛更具体的错 */
+    }
+  }
   const cur = fromMd(kind, content);
   const orig = original != null ? fromMd(kind, original) : {};
   const diff = diffPatch(orig, cur);

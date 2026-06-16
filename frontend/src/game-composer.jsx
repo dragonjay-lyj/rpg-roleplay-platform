@@ -708,6 +708,8 @@ function Composer({
   gameState,   // task 48：透传 game state 拿 relationships，让 @ mention 用真角色
   // 酒馆模式复用:可选隐藏左下角的控制按钮 + 自定义占位符。默认 false → Game Console 不受影响。
   hideSlash = false, hidePermission = false, hideContinue = false, hideAttach = false,
+  // 剧本编辑器右栏复用(窄栏):隐藏模型选择 + 上下文用量环(agent 用 console_assistant 默认模型,无每条模型选择)。默认 false → 游戏/酒馆不受影响。
+  hideModel = false, hideContextUsage = false,
   placeholder,
   // 生图按钮相关
   saveId: composerSaveId,
@@ -956,12 +958,14 @@ function Composer({
             )}
           </div>
           <div className="gc-composer-right">
-            <ContextUsage gameState={gameState} />
+            {!hideContextUsage && <ContextUsage gameState={gameState} />}
+            {!hideModel && (
             <button ref={modelTriggerRef} className="gc-pop-trigger" onClick={toggleModel}>
               <Icon name="sparkle" size={12} />
               <span className="gc-model-label" title={_currentModelLabel(gameState, model, t)}>{_currentModelLabel(gameState, model, t)}</span>
               <Icon name="chevron_down" size={11} />
             </button>
+            )}
             <span className="muted-2" style={{fontSize: 11.5}}>
               {enterToSend
                 ? <><span className="kbd">Enter</span></>

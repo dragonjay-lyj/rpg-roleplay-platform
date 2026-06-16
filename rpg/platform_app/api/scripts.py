@@ -1014,6 +1014,29 @@ async def api_script_delete(request: Request, script_id: int, user=Depends(requi
         return json_response({"ok": False, "error": str(exc)}, status_code=403)
 
 
+@router.post("/api/scripts/{script_id}/rename")
+async def api_script_rename(request: Request, script_id: int, user=Depends(require_user)):
+    """重命名剧本(改 scripts.title)。严格 owner;订阅剧本只读(403)。"""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    title = str(body.get("title") or "").strip()
+    if not title:
+        return json_response({"ok": False, "error": "标题不能为空"}, status_code=400)
+    from ..db import connect as _connect
+    with _connect() as db:
+        row = db.execute(
+            "update scripts set title=%s, updated_at=now() where id=%s and owner_id=%s returning id, title",
+            (title[:200], script_id, user["id"]),
+        ).fetchone()
+        if not row:
+            return json_response({"ok": False, "error": "仅原作者可重命名该剧本(订阅剧本只读;如需改动请先 fork)"}, status_code=403)
+        db.commit()
+    return json_response({"ok": True, "id": row["id"], "title": row["title"]})
+
+
 @router.post("/api/scripts/preview")
 async def api_script_preview(request: Request, user=Depends(require_user)):
     """Dry-run：不入库返切分预览，前端调参用。"""
