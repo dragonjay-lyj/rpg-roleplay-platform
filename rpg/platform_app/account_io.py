@@ -283,7 +283,12 @@ def import_account(user_id: int, zip_bytes: bytes, progress=None) -> dict[str, A
                 warnings.append(f"剧本成员缺失:{member}")
                 continue
             try:
-                res = script_pack.import_script_pack(script_pack._safe_member_read(zf, member), user_id)  # SEC(H-8): 有界解压
+                # #64:把单个剧本内部的章节/事实进度作为 scripts 阶段细粒度进度回报,
+                # 让「导入剧本」进度条对大文件持续走动,而非卡在 0/1 像死了。
+                res = script_pack.import_script_pack(
+                    script_pack._safe_member_read(zf, member), user_id,  # SEC(H-8): 有界解压
+                    progress_cb=lambda done, total: _p("scripts", done, total),
+                )
                 new_sid = int(res.get("script_id"))
                 if origin is not None:
                     script_id_map[int(origin)] = new_sid

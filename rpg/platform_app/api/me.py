@@ -1211,9 +1211,15 @@ async def api_account_export(include_chunks: int = 0, user=Depends(require_user)
 
     from fastapi.responses import Response
 
+    from fastapi.concurrency import run_in_threadpool
+
     from .. import account_io
     try:
-        zip_bytes, filename = account_io.export_account(user["id"], include_chunks=bool(include_chunks))
+        # #64:export_account 是重活(全量拉库 + 建 zip)。放线程池跑,别阻塞事件循环 ——
+        # 否则大账号导出期间整个 worker 卡死,前端连接被代理判超时 → spinner 反复重置像失败。
+        zip_bytes, filename = await run_in_threadpool(
+            account_io.export_account, user["id"], bool(include_chunks),
+        )
     except ValueError as exc:
         return json_response({"ok": False, "error": str(exc)}, status_code=400)
     ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "account-export.zip"
