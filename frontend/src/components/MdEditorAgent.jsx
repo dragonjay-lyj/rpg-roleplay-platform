@@ -3,7 +3,7 @@
 // 写成功后回调 onWriteComplete 让编辑器刷新对应标签。设计 docs/design/N_md_editor.md §5。
 import React from 'react';
 
-const { useState, useRef, useCallback, useEffect } = React;
+const { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } = React;
 
 // 写工具名 → (kind, id-arg-key):写成功后据此刷新编辑器标签。
 const WRITE_TOOL_MAP = {
@@ -43,7 +43,7 @@ async function consumeSSE(res, onEvent) {
   }
 }
 
-export default function MdEditorAgent({ scriptId, activeTab, onWriteComplete, onContinue }) {
+const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, onWriteComplete, onContinue }, ref) {
   const [messages, setMessages] = useState([]);   // [{role, text, tools:[{call_id,tool,args,status,result}]}]
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -164,6 +164,23 @@ export default function MdEditorAgent({ scriptId, activeTab, onWriteComplete, on
     } finally { setBusy(false); }
   }, [messages, busy, pageContext, makeHandler]);
 
+  // 「续写后同步到知识库」桥接:编辑器接受一段续写/改写后,可一键把这段正文丢给本 agent,
+  // 让它按【写作准则·知识同步】(rule 4)读现状 + 同步角色卡/世界书/时间线/canon。
+  useImperativeHandle(ref, () => ({
+    syncFromProse(text, label, rewrite) {
+      const t = (text || '').trim();
+      if (!t || busy) return;
+      const msg =
+        `我刚在「${label || '正文'}」${rewrite ? '改写' : '续写'}了下面这段正文。` +
+        '如果其中**真实地**引入或改变了某个角色的设定/状态/关系、某项世界设定、' +
+        '或修正了某个既有时间线节点,请按【写作准则·知识同步】用对应工具同步到知识资产' +
+        '(角色卡/世界书/时间线/canon);如果没有需要同步的,直接回「无需同步」即可。' +
+        '不要编造正文里没有的内容。\n\n' +
+        `${rewrite ? '改写后的正文' : '续写的正文'}:\n"""\n${t}\n"""`;
+      send(msg);
+    },
+  }), [send, busy]);
+
   return (
     <div className="mde-agent">
       <div className="mde-agent-head">AI 助手{activeTab ? ` · ${activeTab.label}` : ''}</div>
@@ -221,7 +238,9 @@ export default function MdEditorAgent({ scriptId, activeTab, onWriteComplete, on
       </div>
     </div>
   );
-}
+});
+
+export default MdEditorAgent;
 
 function labelKind(kind) {
   return ({ chapter: '章节正文', card: '角色卡', worldbook: '世界书', anchor: '时间线锚点', canon: 'Canon 实体' })[kind] || kind;

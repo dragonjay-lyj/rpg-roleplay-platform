@@ -135,6 +135,24 @@
 .mde-agent-continue:hover { background: var(--accent, #b5654a); color: #fff; }
 .mde-agent-toolbar-hint { font-size: 11px; color: var(--muted-2, #6b655e); }
 
+/* 续写接受后「同步设定到知识库」提示条 */
+.mde-syncbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px; border-top: 1px solid var(--accent, #b5654a);
+  background: rgba(181,101,74,0.10); font-size: 12.5px; color: var(--text, #ebe7df);
+}
+.mde-syncbar-text { flex: 1 1 auto; }
+.mde-syncbar-go {
+  flex: 0 0 auto; background: var(--accent, #b5654a); color: #fff; border: none;
+  border-radius: 6px; padding: 5px 14px; font-size: 12.5px; cursor: pointer; font-family: inherit;
+}
+.mde-syncbar-no {
+  flex: 0 0 auto; background: transparent; color: var(--muted, #968f85);
+  border: 1px solid var(--line, #36322d); border-radius: 6px; padding: 5px 12px;
+  font-size: 12.5px; cursor: pointer; font-family: inherit;
+}
+.mde-syncbar-no:hover { color: var(--text, #ebe7df); }
+
 @media (max-width: 1100px) {
   .mde-panes { grid-template-columns: 200px 1fr 0; }
   .mde-right { display: none; }

@@ -146,7 +146,7 @@ async function fetchGroupList(kind, sid) {
 }
 
 // ── 标签编辑器(P0:textarea;P3 替换为 CodeMirror)──────────────────────
-function EditorPane({ tab, onChange, scriptId, onViewReady }) {
+function EditorPane({ tab, onChange, scriptId, onViewReady, onContinueAccept }) {
   if (!tab) {
     return <div className="mde-empty">从左侧选择一个文件开始编辑<br /><span className="muted">章节正文 / 角色卡 / 世界书 / 时间线 / Canon</span></div>;
   }
@@ -159,6 +159,7 @@ function EditorPane({ tab, onChange, scriptId, onViewReady }) {
       onChange={(v) => onChange(tab.key, v)}
       scriptId={scriptId}
       onViewReady={onViewReady}
+      onContinueAccept={onContinueAccept}
     />
   );
 }
@@ -171,6 +172,9 @@ export default function MdEditorPage() {
   const [activeKey, setActiveKey] = useState(null);
   const [treeReloadKey, setTreeReloadKey] = useState(0);   // agent 写库后 bump,触发文件树重载
   const activeViewRef = useRef(null);                      // 当前 CodeMirror 视图(供侧栏「续写到正文」)
+  const agentRef = useRef(null);                           // MdEditorAgent 命令句柄(续写后同步桥接)
+  const activeRef = useRef(null);                          // 当前标签(在接受续写的回调里读最新 label)
+  const [syncNudge, setSyncNudge] = useState(null);        // 接受续写后提示同步:{text, label, rewrite} | null
 
   // 拉剧本列表(仅自己拥有的可编辑)。
   useEffect(() => {
@@ -250,12 +254,28 @@ export default function MdEditorPage() {
     } catch (_) { /* 静默 */ }
   }, [tabs, scriptId]);
 
+  // 接受一段续写/改写后的桥接:够长就提示「要不要让助手把新设定同步进知识库」。
+  // (续写引擎只产纯文本不落库,知识同步只能由右栏 agent 触发 —— 这条桥接把两路打通。)
+  const onProseAccepted = useCallback((text, info) => {
+    const t = (text || '').trim();
+    if (t.length < 12) return;   // 太短(单词级)不打扰
+    setSyncNudge({ text: t, label: activeRef.current?.label || '正文', rewrite: !!(info && info.rewrite) });
+  }, []);
+
   // 侧栏「续写到正文」:对当前打开的章节正文,在光标处(或选中段)用 AI 续写/改写。
   const onContinue = useCallback((instruction) => {
     const view = activeViewRef.current;
     if (!view) { toast('请先打开一个文件再续写', { kind: 'warn' }); return; }
-    runContinue(view, { scriptId, instruction });
-  }, [scriptId]);
+    runContinue(view, { scriptId, instruction, onAccept: onProseAccepted });
+  }, [scriptId, onProseAccepted]);
+
+  // 「同步设定」:把刚接受的正文丢给右栏 agent,按 rule 4 读现状 + 同步知识资产。
+  const doSync = useCallback(() => {
+    const n = syncNudge;
+    if (!n) return;
+    setSyncNudge(null);
+    try { agentRef.current?.syncFromProse(n.text, n.label, n.rewrite); } catch (_) { /* 静默 */ }
+  }, [syncNudge]);
 
   // Cmd/Ctrl+S 保存当前标签。
   useEffect(() => {
@@ -270,6 +290,7 @@ export default function MdEditorPage() {
   }, [activeKey, saveTab]);
 
   const active = tabs.find((t) => t.key === activeKey) || null;
+  activeRef.current = active;
 
   return (
     <div className="mde-root">
@@ -300,13 +321,22 @@ export default function MdEditorPage() {
               </div>
             ))}
           </div>
-          <EditorPane tab={active} onChange={onEdit} scriptId={scriptId} onViewReady={(v) => { activeViewRef.current = v; }} />
+          <EditorPane tab={active} onChange={onEdit} scriptId={scriptId} onViewReady={(v) => { activeViewRef.current = v; }} onContinueAccept={onProseAccepted} />
+          {syncNudge && (
+            <div className="mde-syncbar">
+              <span className="mde-syncbar-text">
+                刚{syncNudge.rewrite ? '改写' : '续写'}的内容若引入或改变了设定,要让助手同步进角色卡 / 世界书 / 时间线吗?
+              </span>
+              <button className="mde-syncbar-go" onClick={doSync}>同步设定</button>
+              <button className="mde-syncbar-no" onClick={() => setSyncNudge(null)}>忽略</button>
+            </div>
+          )}
         </main>
 
         {/* 右:agent 直写面板(console_assistant SSE)+ 续写到正文 */}
         <aside className="mde-right">
           {scriptId
-            ? <MdEditorAgent scriptId={scriptId} activeTab={active} onWriteComplete={refreshTab} onContinue={onContinue} />
+            ? <MdEditorAgent ref={agentRef} scriptId={scriptId} activeTab={active} onWriteComplete={refreshTab} onContinue={onContinue} />
             : <div className="mde-tree-hint">先选剧本</div>}
         </aside>
       </div>

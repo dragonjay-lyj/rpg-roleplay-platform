@@ -30,9 +30,15 @@ function pendingState(view) { return view.state.field(pendingField, false) || nu
 export function hasPending(view) { return !!pendingState(view); }
 
 export function acceptPending(view) {
-  if (!pendingState(view)) return false;
+  const p = pendingState(view);
+  if (!p) return false;
+  // 接受前先抓住这段被接受的正文,清空待定区后回调(用于「续写后同步设定到知识库」桥接)。
+  const text = view.state.doc.sliceString(p.from, p.to);
   view.dispatch({ effects: setPending.of(null) });
   view.focus();
+  if (text && text.trim() && typeof p.onAccept === 'function') {
+    try { p.onAccept(text, { rewrite: !!p.rewrite }); } catch (_) {}
+  }
   return true;
 }
 
@@ -119,8 +125,8 @@ export async function runContinue(view, opts = {}) {
     view.dispatch({ changes: { from: sel.from, to: sel.to, insert: '' } });
     insertAt = sel.from;
   }
-  // 建空待定区(busy)。
-  view.dispatch({ effects: setPending.of({ from: insertAt, to: insertAt, original: selectionText, busy: true }) });
+  // 建空待定区(busy)。onAccept/rewrite 随待定区一路携带,接受时回调用于「同步到知识库」桥接。
+  view.dispatch({ effects: setPending.of({ from: insertAt, to: insertAt, original: selectionText, busy: true, onAccept: opts.onAccept, rewrite }) });
   view.focus();
 
   const ctrl = new AbortController();
@@ -134,7 +140,7 @@ export async function runContinue(view, opts = {}) {
     if (!p) { ctrl.abort(); return; }   // 用户中途取消
     view.dispatch({
       changes: { from: pos, insert: text },
-      effects: setPending.of({ from: p.from, to: pos + text.length, original: p.original, busy: true }),
+      effects: setPending.of({ from: p.from, to: pos + text.length, original: p.original, busy: true, onAccept: p.onAccept, rewrite: p.rewrite }),
       scrollIntoView: true,
     });
     pos += text.length;
@@ -167,7 +173,7 @@ export async function runContinue(view, opts = {}) {
       return;
     }
     // 完成:留高亮 + 提示条,等用户 Tab 接受 / Esc 放弃。
-    view.dispatch({ effects: setPending.of({ from: p.from, to: p.to, original: p.original, busy: false }) });
+    view.dispatch({ effects: setPending.of({ from: p.from, to: p.to, original: p.original, busy: false, onAccept: p.onAccept, rewrite: p.rewrite }) });
     opts.onState?.('done');
   } catch (e) {
     if (pendingState(view) && !got) rejectPending(view);
@@ -177,7 +183,8 @@ export async function runContinue(view, opts = {}) {
 }
 
 // ── Cmd+K 行内指令:复用全局 __prompt 取指令 → runContinue ────────────────
-export function cmdKKeymap(getScriptId) {
+// getOnAccept:可选,返回「接受续写后同步知识库」回调,与侧栏「续写到正文」共用同一桥接。
+export function cmdKKeymap(getScriptId, getOnAccept) {
   return keymap.of([{
     key: 'Mod-k',
     run: (view) => {
@@ -191,7 +198,7 @@ export function cmdKKeymap(getScriptId) {
             : Promise.resolve(prompt(title)));
         } catch (_) { instr = null; }
         if (instr === null) return;   // 取消
-        runContinue(view, { scriptId: getScriptId?.(), instruction: instr });
+        runContinue(view, { scriptId: getScriptId?.(), instruction: instr, onAccept: getOnAccept?.() });
       })();
       return true;
     },
