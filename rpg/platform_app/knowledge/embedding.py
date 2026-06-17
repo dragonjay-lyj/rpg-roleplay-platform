@@ -626,11 +626,24 @@ def embed_status(script_id: int) -> dict[str, Any]:
             "select count(*) as c from worldbook_entries where script_id = %s and embedding_vec is not null",
             (script_id,),
         ).fetchone()["c"]
+        # 知识库人物(canon)用 kb_canon_entities.embedding(vector 列,**不是** embedding_vec)。
+        # 此前漏算 canon → 前端「知识库人物」卡 es['canon']=undefined → 永远 0 条·状态未知,
+        # 而重做估算/任务却按同样的列正常计数(2924/已完成 N) → 卡片与重做对不上(群反馈)。
+        # 与 import_pipeline 估算口径完全一致(count where embedding is not null)。
+        canon_total = db.execute(
+            "select count(*) as c from kb_canon_entities where script_id = %s",
+            (script_id,),
+        ).fetchone()["c"]
+        canon_done = db.execute(
+            "select count(*) as c from kb_canon_entities where script_id = %s and embedding is not null",
+            (script_id,),
+        ).fetchone()["c"]
     return {
         "running": _EMBED_QUEUE_RUNNING.get(script_id, False),
         "chunks": {"done": chunks_done, "total": chunks_total},
         "cards": {"done": cards_done, "total": cards_total},
         "worldbook": {"done": wb_done, "total": wb_total},
+        "canon": {"done": canon_done, "total": canon_total},
         "model": EMBED_MODEL,
         "dim": EMBED_DIM,
     }
