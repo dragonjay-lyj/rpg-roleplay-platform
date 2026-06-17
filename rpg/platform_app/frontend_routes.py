@@ -234,7 +234,15 @@ async def api_upload_avatar(request: Request):
     data = await f.read()
     if len(data) > 2 * 1024 * 1024:
         return _bad("文件超过 2 MB")
-    safe_name = f"u{user['id']}_{int(time.time())}{ext}"
+    # 魔数校验:不信客户端文件名扩展名,以真实图片字节为准(与角色卡/人设图/卡导入
+    # 三处上传一致,见 api/me.py:_detect_image_mime)。伪造扩展名的非图片 → 400,
+    # 落盘扩展名取检测结果(防止任意字节伪装成 .png 进头像图床并以 image/* 回发)。
+    from .api.me import _detect_image_mime
+    try:
+        _mime, _detected_ext = _detect_image_mime(data)
+    except ValueError as exc:
+        return _bad(str(exc))
+    safe_name = f"u{user['id']}_{int(time.time())}.{_detected_ext}"
     # 落盘走 storage.store_bytes（统一根 AVATARS_DIR）
     _storage_key, _new_url = _storage_store_bytes(data, kind="avatars", filename=safe_name)
     # 对外 URL 仍用旧路径保持向后兼容，前端老 URL 不破
@@ -248,11 +256,6 @@ async def api_upload_avatar(request: Request):
     # 登记 user_assets（失败只 log，不影响上传主流程）
     try:
         from platform_app.assets_registry import register_asset  # lazy import
-        _mime = (
-            "image/png" if ext == ".png"
-            else "image/jpeg" if ext in {".jpg", ".jpeg"}
-            else "image/webp"
-        )
         register_asset(
             user_id=int(user["id"]),
             kind="avatar",
