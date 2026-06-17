@@ -136,10 +136,14 @@ def _summary_section(db, script_id: int, chapter_index: int | None) -> str:
     if chapter_index is None or chapter_index <= 1:
         return ""
     try:
+        # 前情提要的 summary 权威源是 chapter_facts(由拆书/提取流程写入,列名是 chapter),
+        # 不是 script_chapters —— 后者从无 summary 列,旧查询 100% 抛 UndefinedColumn 被
+        # 下面 except 静默吞掉,导致前情永不注入且刷 WARNING 日志。chapter as chapter_index
+        # 保持下游迭代用键不变。
         rows = db.execute(
-            "select chapter_index, summary from script_chapters "
-            "where script_id=%s and chapter_index < %s and chapter_index >= %s "
-            "and coalesce(summary,'') <> '' order by chapter_index desc limit %s",
+            "select chapter as chapter_index, summary from chapter_facts "
+            "where script_id=%s and chapter < %s and chapter >= %s "
+            "and coalesce(summary,'') <> '' order by chapter desc limit %s",
             (script_id, int(chapter_index), int(chapter_index) - _MAX_SUMMARY, _MAX_SUMMARY),
         ).fetchall() or []
     except Exception as exc:
