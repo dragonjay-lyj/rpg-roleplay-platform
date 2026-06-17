@@ -36,6 +36,7 @@ export const MODULES = [
   { id: "sub_agent",     i18nKey: "sub_agent",     persistShape: "dict", dictKey: "sub_agent_model_override", inherit: true },
   { id: "set_parser",    i18nKey: "set_parser",    prefPrefix: "set_parser",               inherit: true },
   { id: "console",       i18nKey: "console",       persistShape: "dict", dictKey: "console_assistant_model_override", inherit: true },
+  { id: "editor",        i18nKey: "editor",        prefPrefix: "editor",                   inherit: true },
   { id: "extractor",     i18nKey: "extractor",     prefPrefix: "extractor",                inherit: true },
   { id: "card_gen",      i18nKey: "card_gen",      prefPrefix: "character_card_generator", inherit: true },
   { id: "card_import",   i18nKey: "card_import",   prefPrefix: "card_import",              inherit: true },

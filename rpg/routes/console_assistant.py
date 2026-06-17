@@ -121,6 +121,12 @@ async def api_console_assistant_chat(
         )
 
     from console_assistant import stream_chat as _stream_chat
+    # 接入站点统一模型参数(与 GM 一致):max_tokens 走用户 settings.max_tokens 偏好,不再写死 1200。
+    try:
+        from app import _chat_max_tokens
+        _mt = _chat_max_tokens(api_user)
+    except Exception:
+        _mt = 1200
 
     def _gen():
         yield from _stream_chat(
@@ -130,6 +136,7 @@ async def api_console_assistant_chat(
             page_context=page_context,
             backend=backend,
             state_provider=_sp,
+            max_tokens=_mt,
         )
 
     return StreamingResponse(_gen(), media_type="text/event-stream")

@@ -2457,7 +2457,7 @@ function ModuleModelsSection() {
   // 故保留在本地按 id 取 → 显示零变化。
   const LABELS = {
     gm: "主 GM 默认模型", sub_agent: "上下文子代理", set_parser: "指令解析代理",
-    console: "控制台助手", extractor: "叙事提取器", card_gen: "角色卡生成器",
+    console: "剧本编辑器 · AI 助手", editor: "剧本编辑器 · AI 续写/改写", extractor: "叙事提取器", card_gen: "角色卡生成器",
     card_import: "AI 整理卡字段", critic: "一致性评分", verifier: "接受条件验证",
     phase_digest: "阶段浓缩 (compact)", black_swan: "黑天鹅事件代理", agent: "通用子代理兜底",
     embedder: "向量嵌入 (RAG)", image_gen: "图像生成模型",
@@ -2466,7 +2466,8 @@ function ModuleModelsSection() {
     gm: "玩家对话默认使用的主模型。这里选择后会写入个人默认模型,新开局和未单独切模型的存档会优先使用它。",
     sub_agent: "整理玩家意图 + 检索计划的子代理;跟随主 GM = 跟主 GM 共享实例。",
     set_parser: "/set 命令自然语言解析子代理。",
-    console: "侧栏控制台助手专用模型;跟随主 GM。",
+    console: "剧本编辑器右栏 AI 助手(直接改库:角色卡/世界书/正文)使用的模型;跟随主 GM。",
+    editor: "剧本编辑器正文 AI 续写/改写(⌘K / 侧栏按钮)使用的模型;跟随主 GM。",
     extractor: "GM 叙事二次解析抽 ops (两步式 GM 第二步)。",
     card_gen: "侧栏创意工具:生成 / 微调角色卡。",
     card_import: "导入酒馆卡时,用 LLM 把一整段自由文本档案整理成结构化字段(身份/背景/外貌/性格等)。仅在导入勾选「用 AI 整理字段」时调用;跟随主 GM。",
