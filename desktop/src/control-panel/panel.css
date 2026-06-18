@@ -2,6 +2,8 @@
    仅在此补「左导航 + 右面板」桌面应用骨架与少量结构样式。 */
 
 body { background: var(--bg-deep); overflow: hidden; }
+/* hidden 属性必须压过下面给 .modal/.onboard 等设的 display,否则默认就弹出来 */
+[hidden] { display: none !important; }
 .text-quiet { color: var(--text-quiet); }
 .hint { font-size: 11.5px; line-height: 1.6; margin: 8px 0 0; }
 .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
