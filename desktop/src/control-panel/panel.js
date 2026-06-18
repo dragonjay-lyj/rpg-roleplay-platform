@@ -126,12 +126,7 @@ function fillBackup() {
 // ── 局域网 ──
 async function loadLan() {
   $('lanEnabled').checked = !!cfg.lanEnabled;
-  try {
-    const r = await sv.lanInfo();
-    $('lanIp').textContent = r.ip || '未检测到';
-    $('lanUrl').value = r.url || '—';
-    $('fwCmd').textContent = r.firewallCmd || '—';
-  } catch (_) { $('lanIp').textContent = '—'; }
+  try { const r = await sv.lanInfo(); $('lanUrl').value = r.url || '—'; $('fwCmd').textContent = r.firewallCmd || '—'; } catch (_) {}
 }
 
 // ── 更新 ──

@@ -33,7 +33,7 @@
   <div class="app">
     <aside class="side">
       <div class="brand"><span class="logo"></span>
-        <span class="brand-name serif">RPG Roleplay</span><span class="mono brand-ver" id="appVersion">—</span>
+        <div class="brand-text"><span class="brand-name serif">RPG Roleplay</span><span class="mono brand-ver" id="appVersion">v—</span></div>
       </div>
       <nav class="nav" id="nav">
         <button class="navitem active" data-tab="overview">概览</button>
@@ -160,23 +160,14 @@
 
         <!-- 局域网访问 -->
         <section class="pane" data-pane="lan">
-          <p class="muted hint" style="margin-top:0;">开启后,本后端会绑定到 <span class="mono">0.0.0.0</span>,同一局域网的其它设备(手机/平板/另一台电脑)可通过下面的地址访问你这台机器上的服务。数据库始终只绑本机,不对外。</p>
-          <div class="warnbox" style="margin-top:14px;"><span class="dot warn"></span><div>局域网模式下,同网设备无需登录即可访问你的本地数据(桌面单用户模式)。仅在可信网络开启。</div></div>
-
-          <label class="field check" style="margin-top:18px;"><input type="checkbox" id="lanEnabled" /><span>开启局域网访问(改动后需重启服务生效)</span></label>
-
+          <label class="field check" style="margin-top:2px;"><input type="checkbox" id="lanEnabled" /><span>开启局域网访问(同网设备可访问;改后需重启服务)</span></label>
+          <p class="muted-2 hint" style="margin-top:8px;">后端绑 <span class="mono">0.0.0.0</span>,数据库仍只绑本机。<span class="warn">局域网内无需登录即可访问你的数据,仅在可信网络开启。</span></p>
           <div class="section-divider">
-            <div class="block-head">局域网访问地址</div>
-            <div class="migrow"><span class="muted">本机局域网 IP</span><span class="mono" id="lanIp">—</span></div>
-            <div class="row" style="margin-top:8px;">
-              <input type="text" id="lanUrl" class="mono" readonly value="—" style="flex:1;" />
-              <button class="btn" id="copyLanUrlBtn">复制地址</button>
-            </div>
+            <div class="block-head">访问地址</div>
+            <div class="row"><input type="text" id="lanUrl" class="mono" readonly value="—" style="flex:1;" /><button class="btn" id="copyLanUrlBtn">复制</button></div>
           </div>
-
           <div class="section-divider">
-            <div class="block-head">放行防火墙(按当前系统的命令)</div>
-            <p class="muted-2 hint" style="margin-top:0;">若同网设备访问不了,多半是系统防火墙挡了。在<strong>管理员/终端</strong>里运行下面的命令放行当前端口:</p>
+            <div class="block-head">放行防火墙(同网访问不了时)</div>
             <pre class="cmdbox" id="fwCmd">—</pre>
             <button class="btn" id="copyFwBtn">复制命令</button>
           </div>
