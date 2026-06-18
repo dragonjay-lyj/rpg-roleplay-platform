@@ -485,6 +485,27 @@ def retrieve_context(user_input: str, verbose: bool = False, state=None, user_id
                         if _last_sat >= 1:
                             _adv_prog(_db_prog, _save_id_prog, _last_sat)
                             _progress_chapter = max(_progress_chapter, _last_sat)
+                        # P4(S7):flag on 时进度改由【前沿派生】——丢弃可能被旧猜章器冲高的 worldline 标量
+                        # (over-shoot 根源),但绝不低于「已确认锚点」可靠底 _last_sat。正常档 derived==_last_sat,
+                        # 等价旧行为;over-shoot 档则收敛回真实章。shadow 记 标量↔派生 供切换前核对。
+                        from kb.reveal import (_frontier_on as _fr_on,
+                                               _frontier_shadow as _fr_shadow,
+                                               derived_progress_chapter as _dpc)
+                        if _fr_on(_save_id_prog):
+                            try:
+                                _derived = _dpc(_save_id_prog, db=_db_prog)
+                                if _fr_shadow():
+                                    log.warning("[shadow] progress scalar=%s derived=%s floor=%s",
+                                                _progress_chapter, _derived, _last_sat)
+                                _progress_chapter = max(1, _last_sat, int(_derived))
+                            except Exception as _dpc_exc:
+                                log.warning("[retrieval] derived_progress_chapter 跳过(非致命): %s", _dpc_exc)
+                        elif _fr_shadow():
+                            try:
+                                log.warning("[shadow] progress scalar=%s derived=%s floor=%s",
+                                            _progress_chapter, _dpc(_save_id_prog, db=_db_prog), _last_sat)
+                            except Exception:
+                                pass
             except Exception as _prog_err:
                 log.warning(f"[retrieval] progress_chapter 同步跳过(非致命): {_prog_err}")
         if not timeline_filter.get("anchor_chapter"):

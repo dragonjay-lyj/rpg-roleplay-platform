@@ -62,6 +62,15 @@ def read_settings(db, save_id: int) -> dict:
         if k in wl:
             out[k] = wl[k]
     out["progress_chapter"] = wl.get("progress_chapter")
+    # P4(S7):flag on 时 progress_chapter 降级为【前沿派生只读】(与 GM 门控同源,根治 over-shoot);
+    # 过渡期保留 _legacy(=worldline 标量)供前端/影子核对。前端数值语义不变(玩家读到第几章)。
+    try:
+        from kb.reveal import _frontier_on, derived_progress_chapter
+        if _frontier_on(save_id):
+            out["progress_chapter_legacy"] = out.get("progress_chapter")
+            out["progress_chapter"] = derived_progress_chapter(save_id, db=db)
+    except Exception:
+        pass
     return out
 
 

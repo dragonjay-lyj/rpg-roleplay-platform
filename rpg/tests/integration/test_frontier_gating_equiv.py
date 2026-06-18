@@ -170,5 +170,127 @@ class FrontierGatingEquiv(unittest.TestCase):
         self.assertEqual({r["name"] for r in rows}, {"势力1", "势力5", "势力10", "势力0"})
 
 
+class FrontierWritePath(unittest.TestCase):
+    """P4 写路径(S6/S7):退役估章器(flag on 时不再 over-shoot)、GM 工具写前沿、rewind 收缩前沿。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cleanup_test_users()
+        cls.client = make_client()
+        u = register_user(cls.client)
+        from platform_app.db import connect, init_db
+        from kb.reveal import backfill_reveal_anchors
+        init_db()
+        with connect() as db:
+            cls.owner_id = int(db.execute(
+                "select id from users where username=%s", (u["username"],)).fetchone()["id"])
+            cls.book_id = int(db.execute(
+                "insert into books(owner_id, slug, title) values (%s,%s,%s) returning id",
+                (cls.owner_id, f"fw_book_{cls.owner_id}", "fw_book")).fetchone()["id"])
+            cls.script_id = int(db.execute(
+                "insert into scripts(owner_id, title) values (%s,%s) returning id",
+                (cls.owner_id, "fw_script")).fetchone()["id"])
+            for n in range(1, 11):
+                db.execute(
+                    "insert into chapter_facts(book_id, script_id, chapter, events) values (%s,%s,%s,%s)",
+                    (cls.book_id, cls.script_id, n,
+                     Jsonb([{"event": f"第{n}章关键事件发生", "importance": "high"}])))
+        assert backfill_reveal_anchors(cls.script_id)["anchors"] == 10
+
+    @classmethod
+    def tearDownClass(cls):
+        cleanup_test_users()
+        for k in ("RPG_TKB_FRONTIER", "RPG_TKB_FRONTIER_SHADOW", "RPG_TKB_FRONTIER_SAVES"):
+            os.environ.pop(k, None)
+
+    def _seed_save(self, occurred_upto: int) -> int:
+        """建档 + ch1..10 锚点(ch1..occurred_upto occurred,余 pending)+ seed_frontier。返回 save_id。"""
+        from platform_app.db import connect
+        from kb.reveal import seed_frontier
+        with connect() as db:
+            sid = int(db.execute(
+                "insert into game_saves(user_id, script_id, title, state_path) "
+                "values (%s,%s,%s,%s) returning id",
+                (self.owner_id, self.script_id, "fw_save",
+                 f"/tmp/fw_save_{self.owner_id}_{occurred_upto}.json")).fetchone()["id"])
+            for n in range(1, 11):
+                st = "occurred" if n <= occurred_upto else "pending"
+                db.execute(
+                    "insert into save_anchor_states(save_id, script_id, anchor_key, source_chapter, "
+                    "status, summary) values (%s,%s,%s,%s,%s,%s)",
+                    (sid, self.script_id, f"chapter:{n}:event:0", n, st, f"ch{n}"))
+        seed_frontier(sid)
+        return sid
+
+    def _set_progress(self, save_id: int, ch: int):
+        from platform_app.db import connect
+        from psycopg.types.json import Jsonb
+        with connect() as db:
+            db.execute("insert into game_sessions(save_id, user_id, worldline) values (%s,%s,%s) "
+                       "on conflict (save_id) do update set worldline=excluded.worldline",
+                       (save_id, self.owner_id, Jsonb({"progress_chapter": ch})))
+
+    def _read_progress(self, save_id: int):
+        from platform_app.db import connect
+        with connect() as db:
+            r = db.execute("select worldline from game_sessions where save_id=%s", (save_id,)).fetchone()
+        wl = (r or {}).get("worldline") if r else None
+        return (wl or {}).get("progress_chapter") if isinstance(wl, dict) else None
+
+    # ── S6:退役估章器 —— flag on 时估章不再 over-shoot ──────────────────────────
+    def test_estimator_disabled_when_frontier_on(self):
+        from gm_serving.anchor_reconcile import reconcile_anchors_for_turn
+        judge = lambda uid, text, pending, save_id=None: {"reached": [], "estimated_chapter": 9}
+
+        # flag off:估章生效 → 进度被推到 9(旧 over-shoot 行为,有界但仍跳)
+        os.environ["RPG_TKB_FRONTIER"] = "off"
+        sid_off = self._seed_save(3)
+        self._set_progress(sid_off, 1)
+        reconcile_anchors_for_turn(sid_off, self.owner_id, "本回合剧情正文" * 20, _judge=judge)
+        self.assertEqual(self._read_progress(sid_off), 9, "flag off 估章应推进到 9(旧行为)")
+
+        # flag on:估章退役 → 进度不被估章推高(保持 1,改由前沿派生)
+        os.environ["RPG_TKB_FRONTIER"] = "on"
+        sid_on = self._seed_save(3)
+        self._set_progress(sid_on, 1)
+        reconcile_anchors_for_turn(sid_on, self.owner_id, "本回合剧情正文" * 20, _judge=judge)
+        self.assertEqual(self._read_progress(sid_on), 1, "flag on 估章应退役,进度不被冲高")
+
+    # ── S6.3:GM 工具 mark_anchor_satisfied 写前沿 ──────────────────────────────
+    def test_mark_satisfied_writes_frontier(self):
+        from platform_app.db import connect
+        from kb.reveal import derived_progress_chapter
+        from tools_dsl.command_tools_anchors import _t_mark_anchor_satisfied
+        os.environ["RPG_TKB_FRONTIER"] = "on"
+        sid = self._seed_save(3)
+        self.assertEqual(derived_progress_chapter(sid), 3)
+        out = _t_mark_anchor_satisfied(self.owner_id, {
+            "save_id": sid, "anchor_key": "chapter:4:event:0",
+            "how_it_happened": "玩家本回合到达第4章锚点", "occurred_at_turn": 1})
+        self.assertIn('"ok": true', out)
+        with connect() as db:
+            n = db.execute("select count(*) c from save_reveal_frontier where save_id=%s "
+                           "and anchor_key=%s", (sid, "chapter:4:event:0")).fetchone()["c"]
+        self.assertEqual(n, 1, "GM 工具标记后前沿应含该锚点")
+        self.assertEqual(derived_progress_chapter(sid), 4, "派生进度应随前沿推进到 4")
+
+    # ── S7.3:rewind 收缩前沿 → derived 下降 ────────────────────────────────────
+    def test_rewind_shrinks_frontier(self):
+        from platform_app.db import connect
+        from kb.reveal import derived_progress_chapter, recompute_visible_set
+        os.environ["RPG_TKB_FRONTIER"] = "on"
+        sid = self._seed_save(5)
+        self.assertEqual(derived_progress_chapter(sid), 5)
+        # 复现 rewind 到 ch3 的前沿收缩(handler 内确定性逻辑):删 source_chapter>3 的前沿 + 重算
+        target = 3
+        with connect() as db:
+            db.execute(
+                "delete from save_reveal_frontier where save_id=%s and anchor_key in "
+                "(select anchor_key from save_anchor_states where save_id=%s and source_chapter > %s)",
+                (sid, sid, target))
+            recompute_visible_set(db, sid, self.script_id)
+        self.assertEqual(derived_progress_chapter(sid), 3, "rewind 后派生进度应降到 3")
+
+
 if __name__ == "__main__":
     unittest.main()

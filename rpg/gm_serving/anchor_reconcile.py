@@ -404,7 +404,11 @@ def _reconcile_impl(
     # 3. Bug B 有界叙事章估计上下文。只在【真实默认判定器】路径备料(只读自连接);注入式 _judge
     #    (离线测试)不备料、不连库,估章值由注入判定器自带。备料失败 → est_ctx=None → 本回合关估章
     #    (避免 prev 基线失真还参与落库)。
-    est_on = _estimate_enabled()
+    # P4(S6):退役猜章器 —— 不做全局默认翻转(避免影响所有现存档),而是【前沿系统对本档启用时】
+    # 关掉估章:此时进度改由前沿派生(derived_progress_chapter,S7)推进,估章是 over-shoot 旧源。
+    # flag off → est_on 维持今日行为(有界估章);RPG_PROGRESS_NARRATIVE_ESTIMATE=0 仍可全局强关。
+    from kb.reveal import _frontier_on as _frontier_on_save
+    est_on = _estimate_enabled() and not _frontier_on_save(save_id)
     est_ctx: dict[str, Any] | None = None
     if est_on and _judge is None:
         try:
@@ -522,6 +526,16 @@ def _apply_hits(
                 advance_progress(db, save_id, src_ch)
             except Exception as adv_exc:  # 进度同步失败不阻断锚点标记
                 log.warning("[anchor_reconcile] advance_progress 失败(忽略): %s", adv_exc)
+        # P4(S6):写前沿(GM/判定器声明到达 → 增量并入可见集)。复用同一 db 连接,原子。
+        # flag off 时 _frontier_on 返 False → 不写,行为零变化。
+        from kb.reveal import _frontier_on as _fr_on
+        if _fr_on(save_id):
+            try:
+                from kb.reveal import mark_anchor_reached
+                mark_anchor_reached(save_id, key, turn=occurred_turn,
+                                    via="reconciler", drift=drift, db=db)
+            except Exception as fr_exc:  # 前沿写失败不阻断锚点标记
+                log.warning("[anchor_reconcile] mark_anchor_reached 失败(忽略): %s", fr_exc)
     return marked
 
 

@@ -149,7 +149,7 @@ def _t_mark_anchor_satisfied(user_id: int, args: dict) -> str:
             if anchor_key:
                 row = db.execute(
                     """
-                    select id, status, summary, source_chapter from save_anchor_states
+                    select id, status, summary, source_chapter, anchor_key from save_anchor_states
                     where save_id = %s and anchor_key = %s
                     """,
                     (save_id, anchor_key),
@@ -157,7 +157,7 @@ def _t_mark_anchor_satisfied(user_id: int, args: dict) -> str:
             else:
                 row = db.execute(
                     """
-                    select id, status, summary, source_chapter from save_anchor_states
+                    select id, status, summary, source_chapter, anchor_key from save_anchor_states
                     where save_id = %s and id = %s
                     """,
                     (save_id, int(anchor_id_raw)),
@@ -191,6 +191,16 @@ def _t_mark_anchor_satisfied(user_id: int, args: dict) -> str:
                     advance_progress(db, save_id, _src_ch)
                 except Exception:
                     pass  # 进度同步失败不阻断锚点标记
+            # P4(S6):写前沿(GM 声明到达 → 增量并入可见集)。同一 db 连接,原子;
+            # flag off 时 _frontier_on 返 False → 不写,行为零变化。
+            try:
+                from kb.reveal import _frontier_on, mark_anchor_reached
+                _akey = anchor_key or row.get("anchor_key")
+                if _akey and _frontier_on(save_id):
+                    mark_anchor_reached(save_id, _akey, turn=occurred_turn,
+                                        via="gm", drift=drift, db=db)
+            except Exception:
+                pass  # 前沿写失败不阻断锚点标记
         return json.dumps({
             "ok": True,
             "anchor_id": row["id"],
