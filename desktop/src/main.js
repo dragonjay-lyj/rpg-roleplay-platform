@@ -74,7 +74,8 @@ async function openAppWindow() {
   let url;
   if (c.mode === 'local') {
     if (supervisor.state !== 'running') await supervisor.start();
-    url = `http://127.0.0.1:${supervisor.backendPort}/`;
+    // 后端裸 / 返回服务 JSON;应用入口是 Platform.html(desktop 模式免登录,无用户则自动跳 Login 注册)。
+    url = `http://127.0.0.1:${supervisor.backendPort}/Platform.html`;
   } else {
     url = c.onlineUrl.replace(/\/+$/, '') + '/';
   }
@@ -123,10 +124,12 @@ function wireIpc() {
   ipcMain.handle('app:open', async () => ({ url: await openAppWindow() }));
   ipcMain.handle('app:openExternal', async () => {
     const c = cfg.load();
-    let url = c.mode === 'local'
-      ? (supervisor.state === 'running' ? `http://127.0.0.1:${supervisor.backendPort}/` : null)
-      : c.onlineUrl;
-    if (!url) { await supervisor.start(); url = `http://127.0.0.1:${supervisor.backendPort}/`; }
+    if (c.mode === 'local') {
+      if (supervisor.state !== 'running') await supervisor.start();
+      await shell.openExternal(`http://127.0.0.1:${supervisor.backendPort}/Platform.html`);
+      return { url: `http://127.0.0.1:${supervisor.backendPort}/Platform.html` };
+    }
+    const url = c.onlineUrl.replace(/\/+$/, '') + '/';
     await shell.openExternal(url);
     return { url };
   });
@@ -278,6 +281,22 @@ function wireIpc() {
     }
     return { ip, port, url, firewallCmd };
   });
+
+  // 局域网地址二维码(供手机扫码);qrcode 在主进程生成 data URL。
+  ipcMain.handle('lan:qr', async () => {
+    const ip = _lanIp();
+    const port = supervisor.backendPort || cfg.load().backendPort || 0;
+    if (!ip || !port) return { ok: false };
+    const url = `http://${ip}:${port}/`;
+    try {
+      const QR = require('qrcode');
+      const dataUrl = await QR.toDataURL(url, { margin: 1, width: 240, color: { dark: '#1a1817', light: '#f4efe6' } });
+      return { ok: true, url, dataUrl };
+    } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  });
+
+  // 可靠复制:走主进程 clipboard(渲染层 navigator.clipboard 在部分上下文不可用)。
+  ipcMain.handle('sys:copyText', (_e, text) => { clipboard.writeText(String(text || '')); return { ok: true }; });
 
   // ── 备份目录选择 + 立即备份到目录 ──
   ipcMain.handle('backup:pickDir', async () => {

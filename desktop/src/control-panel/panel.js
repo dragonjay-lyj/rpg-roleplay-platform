@@ -5,7 +5,7 @@ const $ = (id) => document.getElementById(id);
 const sv = window.sv;
 const CONSENT_TEXT = '我已阅读 AUP §2.J,理解不得包含成人主题节选,同意(此操作记录我的同意)';
 const LINKS = {
-  landing: 'https://play.stellatrix.icu/legal/terms',
+  landing: 'https://play.stellatrix.icu/legal/terms-of-service',
   app: 'https://rpg-roleplay.stellatrix.icu/',
   repo: 'https://github.com/felixchaos/rpg-roleplay-platform',
   card: 'https://felixchaos.link/',
@@ -20,7 +20,7 @@ async function sha256hex(s) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
-async function copy(text) { try { await navigator.clipboard.writeText(text); return true; } catch (_) { return false; } }
+async function copy(text) { try { await sv.copyText(text); return true; } catch (_) { try { await navigator.clipboard.writeText(text); return true; } catch (e) { return false; } } }
 function flash(btn, txt) { const o = btn.textContent; btn.textContent = txt; btn.disabled = true; setTimeout(() => { btn.textContent = o; btn.disabled = false; }, 1200); }
 
 // ── 标签切换 ──
@@ -55,7 +55,6 @@ function renderStatus(s) {
   $('restartBtn').disabled = busy || s.state === 'stopped';
   $('svError').hidden = s.state !== 'error';
   if (s.state === 'error') $('svErrorTitle').textContent = s.detail || '启动失败';
-  $('openAppBtn').disabled = busy;
   refreshBackupGate();
 }
 
@@ -64,6 +63,7 @@ function renderMode() {
   const local = cfg.mode === 'local';
   document.querySelectorAll('.modeseg button').forEach((b) => b.classList.toggle('active', b.dataset.mode === cfg.mode));
   $('localSvc').hidden = !local;
+  $('lanShareRow').hidden = !local;   // 局域网分享(复制地址+二维码)仅本地模式
   $('modeHint').textContent = local ? '本机离线 · NSFW 自主' : '连云端账号';
   renderStatus(last);
 }
@@ -158,7 +158,7 @@ async function submitFeedback() {
 
 // ── 首次运行向导 ──
 function maybeOnboard() {
-  if (cfg.onboarded) return;
+  if (cfg.onboarded && cfg.rememberMode) return;   // 记住选择时直接进上次模式;否则每次问
   $('onboard').hidden = false;
   let picked = null;
   document.querySelectorAll('.modecard').forEach((c) => c.addEventListener('click', () => { picked = c.dataset.mode; document.querySelectorAll('.modecard').forEach((x) => x.classList.toggle('sel', x === c)); $('onboardDone').disabled = false; }));
@@ -175,6 +175,7 @@ async function init() {
   $('lnLanding').href = LINKS.landing; $('lnApp').href = LINKS.app; $('lnRepo').href = LINKS.repo; $('lnCard').href = LINKS.card;
   cfg = await sv.getConfig();
   renderMode(); fillForm(); fillBackup();
+  $('rememberMode').checked = !!cfg.rememberMode;
   $('updCurrent').textContent = `当前 v${appVer} · ${cfg.updateChannel || 'stable'}`;
   renderStatus(await sv.status());
   (await sv.logs()).forEach(appendLog);
@@ -184,9 +185,18 @@ async function init() {
   document.querySelectorAll('.modeseg button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
   // overview
-  $('openAppBtn').addEventListener('click', () => sv.openApp());
   $('openExtBtn').addEventListener('click', () => sv.openAppExternal());
   $('sideOpenBrowser').addEventListener('click', () => sv.openAppExternal());
+  $('rememberMode').addEventListener('change', async () => { cfg = await sv.setConfig({ rememberMode: $('rememberMode').checked }); });
+  $('copyLanBtn').addEventListener('click', async () => { const r = await sv.lanInfo(); const ok = await copy((r && r.url) || ''); flash($('copyLanBtn'), ok ? '已复制地址' : '复制失败'); });
+  // 二维码:hover 右侧 QR 区弹出供手机扫码(延时关闭跨越间隙)
+  let _qrLoaded = false, _qrT;
+  const _showQr = async () => { clearTimeout(_qrT); $('qrPop').hidden = false; if (!_qrLoaded) { try { const r = await sv.lanQr(); if (r && r.ok) { $('qrImg').src = r.dataUrl; _qrLoaded = true; } } catch (_) {} } };
+  const _hideQr = () => { _qrT = setTimeout(() => { $('qrPop').hidden = true; }, 180); };
+  $('qrBtn').addEventListener('mouseenter', _showQr);
+  $('qrBtn').addEventListener('mouseleave', _hideQr);
+  $('qrPop').addEventListener('mouseenter', () => clearTimeout(_qrT));
+  $('qrPop').addEventListener('mouseleave', _hideQr);
   $('startBtn').addEventListener('click', () => sv.start().catch(() => {}));
   $('stopBtn').addEventListener('click', () => sv.stop().catch(() => {}));
   $('restartBtn').addEventListener('click', () => sv.restart().catch(() => {}));

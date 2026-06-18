@@ -1944,29 +1944,29 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
 
         # --- (视图) kb_nodes:统一节点入口(UNION ALL 投影五源表之三;chunk/fact 按章窗口召回不入视图) ---
         # 三 SELECT 各列类型已逐一核对一致(embedding 均 vector(768)、aliases 均 jsonb、importance/priority 均 int)。
-        """create or replace view kb_nodes as
-          select 'canon_entity'::text as node_kind, cce.script_id, cce.logical_key as node_key,
-                 cce.name, cce.type as subtype, cce.summary as body,
-                 cce.first_revealed_chapter, cce.reveal_known,
-                 coalesce(cce.reveal_anchor_key, cce.metadata->>'reveal_anchor_key') as reveal_anchor_key,
-                 cce.embedding as embedding_vec,
-                 cce.public_knowledge, cce.importance, cce.aliases, cce.metadata
-            from kb_canon_entities cce where coalesce(cce.importance, 0) >= 0
-          union all
-          select 'character'::text, cc.script_id, cc.name, cc.name, cc.card_type,
-                 coalesce(cc.identity, cc.personality),
-                 cc.first_revealed_chapter, cc.reveal_known,
-                 coalesce(cc.reveal_anchor_key, cc.metadata->>'reveal_anchor_key'),
-                 cc.embedding_vec,
-                 false, cc.importance, cc.aliases, cc.metadata
-            from character_cards cc where cc.card_type='npc' and cc.enabled
-          union all
-          select 'worldbook'::text, wb.script_id, wb.title, wb.title, wb.insertion_position,
-                 wb.content, wb.first_revealed_chapter, wb.reveal_known,
-                 coalesce(wb.reveal_anchor_key, wb.metadata->>'reveal_anchor_key'),
-                 wb.embedding_vec,
-                 false, wb.priority, '[]'::jsonb, wb.metadata
-            from worldbook_entries wb where wb.enabled""",
+        # kb_nodes 视图:embedding 列(vector)仅在 pgvector 存在时才建。无 pgvector 的部署
+        # (如桌面捆绑的精简 PG)若直接引用 embedding 列,建视图即报 UndefinedColumn、整个迁移中断。
+        # → 用 DO 块按 pgvector 是否存在分两种视图:有则取真 embedding;无则 null::text 占位
+        #   (此时召回自动降级 jsonb/关键词,不走向量)。对已装 pgvector 的生产,结果视图等价。
+        """do $kbv$
+        begin
+          if exists (select 1 from pg_extension where extname = 'vector') then
+            execute 'create or replace view kb_nodes as
+              select ''canon_entity''::text as node_kind, cce.script_id, cce.logical_key as node_key, cce.name, cce.type as subtype, cce.summary as body, cce.first_revealed_chapter, cce.reveal_known, coalesce(cce.reveal_anchor_key, cce.metadata->>''reveal_anchor_key'') as reveal_anchor_key, cce.embedding as embedding_vec, cce.public_knowledge, cce.importance, cce.aliases, cce.metadata from kb_canon_entities cce where coalesce(cce.importance, 0) >= 0
+              union all
+              select ''character''::text, cc.script_id, cc.name, cc.name, cc.card_type, coalesce(cc.identity, cc.personality), cc.first_revealed_chapter, cc.reveal_known, coalesce(cc.reveal_anchor_key, cc.metadata->>''reveal_anchor_key''), cc.embedding_vec, false, cc.importance, cc.aliases, cc.metadata from character_cards cc where cc.card_type=''npc'' and cc.enabled
+              union all
+              select ''worldbook''::text, wb.script_id, wb.title, wb.title, wb.insertion_position, wb.content, wb.first_revealed_chapter, wb.reveal_known, coalesce(wb.reveal_anchor_key, wb.metadata->>''reveal_anchor_key''), wb.embedding_vec, false, wb.priority, ''[]''::jsonb, wb.metadata from worldbook_entries wb where wb.enabled';
+          else
+            execute 'create or replace view kb_nodes as
+              select ''canon_entity''::text as node_kind, cce.script_id, cce.logical_key as node_key, cce.name, cce.type as subtype, cce.summary as body, cce.first_revealed_chapter, cce.reveal_known, coalesce(cce.reveal_anchor_key, cce.metadata->>''reveal_anchor_key'') as reveal_anchor_key, null::text as embedding_vec, cce.public_knowledge, cce.importance, cce.aliases, cce.metadata from kb_canon_entities cce where coalesce(cce.importance, 0) >= 0
+              union all
+              select ''character''::text, cc.script_id, cc.name, cc.name, cc.card_type, coalesce(cc.identity, cc.personality), cc.first_revealed_chapter, cc.reveal_known, coalesce(cc.reveal_anchor_key, cc.metadata->>''reveal_anchor_key''), null::text, false, cc.importance, cc.aliases, cc.metadata from character_cards cc where cc.card_type=''npc'' and cc.enabled
+              union all
+              select ''worldbook''::text, wb.script_id, wb.title, wb.title, wb.insertion_position, wb.content, wb.first_revealed_chapter, wb.reveal_known, coalesce(wb.reveal_anchor_key, wb.metadata->>''reveal_anchor_key''), null::text, false, wb.priority, ''[]''::jsonb, wb.metadata from worldbook_entries wb where wb.enabled';
+          end if;
+        end
+        $kbv$;""",
     ]),
     (75, "feedback_anon_desktop_email", [
         # 桌面本地版匿名反馈接入服务器 + 邮箱回执(P1)。

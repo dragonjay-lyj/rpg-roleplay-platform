@@ -26,6 +26,7 @@ const DEFAULTS = {
   updateChannel: 'stable',
   autoStartLocal: true,
   onboarded: false,        // 首启向导完成标记
+  rememberMode: true,      // 记住运行模式选择(否则每次启动让用户选)
   lanEnabled: false,       // 局域网访问:后端绑 0.0.0.0(同网可访问)
   backupDir: '',           // 本地备份目录(自动备份导出 zip 存放处)
   autoBackup: false,       // 自动备份开关

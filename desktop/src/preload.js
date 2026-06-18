@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('sv', {
 
   // 局域网
   lanInfo: () => ipcRenderer.invoke('lan:info'),
+  lanQr: () => ipcRenderer.invoke('lan:qr'),
+
+  // 可靠复制(主进程 clipboard)
+  copyText: (text) => ipcRenderer.invoke('sys:copyText', text),
 
   // 备份目录 / 立即备份
   pickBackupDir: () => ipcRenderer.invoke('backup:pickDir'),
