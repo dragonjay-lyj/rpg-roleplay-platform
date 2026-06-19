@@ -755,12 +755,20 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
 }
 
 // 酒馆模式复用:speakerName/tag 可选覆盖默认「玩家」标签(persona 名等)。
-function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speakerName, tag, hideMeta }) {
+function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speakerName, speakerAvatar, tag, hideMeta }) {
   const tagLabel = tag || speakerName || "玩家";
+  // speakerAvatar 兼容:若为 URL(/ 或 http 开头)则渲 AvatarImg,否则保持首字母 span(向后兼容)。
+  const isAvatarUrl = speakerAvatar && (speakerAvatar.startsWith('/') || speakerAvatar.startsWith('http'));
+  const avatarNode = speakerAvatar
+    ? (isAvatarUrl
+        ? <AvatarImg src={speakerAvatar} size={28} shape="circle" />
+        : <span className="gc-msg-avatar serif">{speakerAvatar}</span>)
+    : null;
   return (
     <div className="gc-msg gc-msg-player">
       {!hideMeta && (
         <div className="gc-msg-meta">
+          {avatarNode}
           <span className="gc-msg-tag muted">{tagLabel}</span>
         </div>
       )}

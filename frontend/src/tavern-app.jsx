@@ -344,7 +344,7 @@ export function TavernThinkingBlock({ text, thinking }) {
   );
 }
 
-export function TavernChatArea({ history, running, saveId, charName, charInitial, charAvatar, personaName, hasError, errorMsg, onRetry, lastMeta, elapsedLabel }) {
+export function TavernChatArea({ history, running, saveId, charName, charInitial, charAvatar, personaName, personaAvatar, hasError, errorMsg, onRetry, lastMeta, elapsedLabel }) {
   const ref = useRef(null);
 
   // 内嵌聊天图片:最后一条助手消息绝对索引 + 图片按消息分发(复用游戏端 hook)
@@ -414,7 +414,8 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
           return (
             <PlayerBlock
               key={`u-${i}`} text={m.content} ts={m.ts} attachments={m.attachments}
-              msgIndex={i} saveId={saveId} commitId={commitId} hideMeta
+              msgIndex={i} saveId={saveId} commitId={commitId}
+              tag={personaName} speakerAvatar={personaAvatar || undefined}
             />
           );
         })}
@@ -809,6 +810,7 @@ export default function TavernApp() {
   const charInitial = charName.trim().slice(0, 1);
   const charAvatar = (character && character.avatar_path) || (activeChat && activeChat.avatar_path) || null;
   const personaName = (persona && persona.name) || '你';
+  const personaAvatar = (persona && persona.avatar_path) || null;
   const exportUrl = activeId != null ? window.api.tavern.exportJsonl(activeId) : null;
 
   return (
@@ -862,7 +864,7 @@ export default function TavernApp() {
           <TavernChatArea
             history={history} running={running}
             saveId={activeId}
-            charName={charName} charInitial={charInitial} charAvatar={charAvatar} personaName={personaName}
+            charName={charName} charInitial={charInitial} charAvatar={charAvatar} personaName={personaName} personaAvatar={personaAvatar}
             hasError={hasError} onRetry={onRetry}
           />
         )}
