@@ -32,6 +32,18 @@ New-Item -ItemType Directory -Force -Path $Stage, $Work | Out-Null
 
 function Dl($url, $out) { Write-Host "  ↓ $url"; Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing }
 
+# ── 运行时缓存(便携 Python+依赖 + 便携 PG)→ 跨补丁构建字节一致 → blockmap 差量极小 → 小更新包 ──
+$ReqHash = (Get-FileHash "$Root\rpg\requirements.txt" -Algorithm SHA256).Hash.Substring(0,12)
+$RuntimeCache = Join-Path $Desk ".runtime-cache\py$PyVer-pg$PgVer-$PbsTriple-req$ReqHash"
+$RuntimeCached = $false
+if ((Test-Path "$RuntimeCache\runtime\python\python.exe") -and (Test-Path "$RuntimeCache\pg\bin\postgres.exe")) {
+  Write-Host "== 运行时缓存命中 → 复用 runtime+pg,跳过下载/安装 =="
+  Copy-Item "$RuntimeCache\runtime" "$Stage\runtime" -Recurse
+  Copy-Item "$RuntimeCache\pg" "$Stage\pg" -Recurse
+  $RuntimeCached = $true
+}
+
+if (-not $RuntimeCached) {
 # ── 1. 便携 Python ──
 Write-Host "== 1/5 便携 Python ($PyVer) =="
 $pyTar = "cpython-$PyVer+$PbsTag-$PbsTriple-install_only.tar.gz"
@@ -70,6 +82,14 @@ if ($BuildPgvector) {
 } else {
   Write-Host "== 4/5 pgvector 跳过(Windows v1 降级 jsonb;软依赖)=="
 }
+
+# 填充运行时缓存(供后续补丁构建复用 → 小体积差量更新)
+New-Item -ItemType Directory -Force -Path $RuntimeCache | Out-Null
+if (Test-Path "$RuntimeCache\runtime") { Remove-Item -Recurse -Force "$RuntimeCache\runtime" }
+if (Test-Path "$RuntimeCache\pg")      { Remove-Item -Recurse -Force "$RuntimeCache\pg" }
+Copy-Item "$Stage\runtime" "$RuntimeCache\runtime" -Recurse
+Copy-Item "$Stage\pg" "$RuntimeCache\pg" -Recurse
+}  # ← end「运行时构建/缓存复用」块(命中缓存则跳过上面 1-4 步)
 
 # ── 5. 后端源码 + 前端(排除测试/夹具/venv;小说夹具绝不进包)──
 Write-Host "== 5/5 后端源码 + 前端 =="

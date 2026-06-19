@@ -11,3 +11,6 @@ resources-staged/
 *.p8
 *.cer
 *.provisionprofile
+
+# 运行时缓存(便携 Python/PG,体积巨大;CI actions/cache 管理,绝不入库)
+.runtime-cache/
