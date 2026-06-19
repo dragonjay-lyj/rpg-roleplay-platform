@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-06-19
+
+### Fixed
+- 中转站 base_url 自愈:用户把文档里的完整「接口地址」`https://host/v1/chat/completions` 整段填进 base_url,导致 SDK 再拼 `/chat/completions`、`/models` 双双 404 →「不可访问 / 0 模型」(如 EvoMap)。现在 `set_credential` 写时 + `get_credential` 读时都自动剥掉 `/chat/completions` 尾巴(大小写无关,不动 `/v1`、`/v1beta/openai`),历史误填无需重填即自愈。
+
 ## [1.0.3] - 2026-06-19
 
 后端 harness + 热路径系统性对抗审计(12 子系统,50 候选→26 确认→opus 核实)→ 22 项验证级增量修复(PATCH:全为缺陷修复,不重写架构)。真库 e2e 验证(迁移落库 + 单测,本批零新增失败)。
