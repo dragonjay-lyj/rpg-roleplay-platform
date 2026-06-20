@@ -58,6 +58,14 @@ class ImportRobustnessSource(unittest.TestCase):
         self.assertIn("data_type = 'jsonb'", SRC)
         self.assertIn("jsonb_cols", SRC)
 
+    def test_branch_refs_restored_from_payload(self):
+        # #78: 导入须恢复 export 的所有 branch_refs(命名分支头),target 随 commit 重映射;
+        # 不能再只硬造单个 refs/heads/main(否则选其余分支「继续」时从根另开新分支)。
+        self.assertIn('payload.get("refs")', SRC)
+        self.assertIn("on conflict (save_id, name)", SRC)
+        # active_commit_id 须优先取 export 标 active 的 ref
+        self.assertIn("active_commit_id", SRC)
+
 
 if __name__ == "__main__":
     unittest.main()

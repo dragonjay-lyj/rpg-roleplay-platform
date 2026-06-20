@@ -329,8 +329,41 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
             ).fetchone()
             old_to_new[old_id] = int(new_commit["id"])
 
-        # 3. 创建 active ref 指向最新 commit
-        if old_to_new:
+        # 3. 重建 branch_refs(保留所有命名分支头 + active 标记;target 随 commit 重映射)
+        #    旧实现只硬造单个 refs/heads/main 指向最后一个 commit → 丢失导出里的其余所有分支头。
+        #    分支树(读 branch_commits DAG)仍显示全部节点,但选任意非 main 分支「继续」时,
+        #    _find_or_create_ref_for_commit 找不到指向该节点的 ref → 另造 refs/runtime/user-N
+        #    → 用户报 #78「选任意分支都从头开始,并自动从根创建新分支」。export 本就 dump 了 refs,
+        #    导入照样恢复即可。
+        active_commit_id: int | None = None
+        made_ref = False
+        for r in payload.get("refs") or []:
+            if not isinstance(r, dict):
+                continue
+            _tgt = r.get("target_commit_id")
+            try:
+                new_tgt = old_to_new.get(int(_tgt)) if _tgt is not None else None
+            except (TypeError, ValueError):
+                new_tgt = None
+            if new_tgt is None:
+                continue  # 目标 commit 没导进来 → 跳过(别造悬空 ref)
+            is_active = bool(r.get("is_active"))
+            db.execute(
+                """
+                insert into branch_refs(save_id, name, kind, target_commit_id, is_active)
+                values (%s, %s, %s, %s, %s)
+                on conflict (save_id, name) do update set
+                  target_commit_id = excluded.target_commit_id,
+                  is_active = excluded.is_active
+                """,
+                (new_save_id, r.get("name") or "refs/heads/main",
+                 r.get("kind") or "head", new_tgt, is_active),
+            )
+            made_ref = True
+            if is_active:
+                active_commit_id = new_tgt
+        # 兜底:旧版导出无 refs(v1)或全部 ref 目标缺失 → 退回单个 main 指向最后 commit
+        if not made_ref and old_to_new:
             last_commit_id = list(old_to_new.values())[-1]
             db.execute(
                 """
@@ -339,9 +372,14 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
                 """,
                 (new_save_id, "refs/heads/main", "head", last_commit_id),
             )
+            active_commit_id = last_commit_id
+        # active_commit_id:优先 export 标 active 的 ref;否则退回最后一个 commit
+        if active_commit_id is None and old_to_new:
+            active_commit_id = list(old_to_new.values())[-1]
+        if active_commit_id is not None:
             db.execute(
                 "update game_saves set active_commit_id = %s where id = %s",
-                (last_commit_id, new_save_id),
+                (active_commit_id, new_save_id),
             )
 
         # 4. task 69: 导入 9 张 per-save 状态表(v2 才有)
