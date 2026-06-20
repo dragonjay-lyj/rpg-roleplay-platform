@@ -793,6 +793,18 @@ def _kb_backed_state(state: "GameState", save_id: int, commit_id: int) -> "GameS
             _mem[_tk] = _blob_mem[_tk]
     if _mem:
         data["memory"] = _mem
+    # 同理 worldline 下的瞬态(save_kb._DROP_WL:last_projection / last_validation / pending_projection)
+    # —— pending_projection 是【待确认的时间跳跃】,属功能性:多 worker 冷重载丢了会让待确认跳跃失效。
+    # 只兜这 3 个瞬态键,不动 materialize 已重建的权威 worldline 字段(设置/进度/user_variables)。
+    _blob_wl = (getattr(state, "data", {}) or {}).get("worldline") or {}
+    _wl = data.get("worldline")
+    if not isinstance(_wl, dict):
+        _wl = {}
+    for _tk in ("last_projection", "last_validation", "pending_projection"):
+        if _wl.get(_tk) is None and _blob_wl.get(_tk) is not None:
+            _wl[_tk] = _blob_wl[_tk]
+    if _wl:
+        data["worldline"] = _wl
     data["_active_save_id"] = save_id  # materialize 丢瞬态指针,这里补回
     return GameState(data)
 
