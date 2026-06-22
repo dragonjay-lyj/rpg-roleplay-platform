@@ -55,10 +55,21 @@ create table if not exists stop_signals (
 """
 
 
+# [round-4-P2] 建表只跑一次:原来 is_stop_requested 每个流式 token 都触发 CREATE TABLE
+#   IF NOT EXISTS DDL + 一次连接池 acquire,几个并发 streaming 用户即可耗尽连接池(每请求 8s 超时)。
+_STOP_TABLE_READY = False
+_last_stop_cleanup_at = 0.0  # 过期行清理节流(秒)
+_STOP_CLEANUP_INTERVAL = 30.0
+
+
 def _ensure_stop_table() -> None:
+    global _STOP_TABLE_READY
+    if _STOP_TABLE_READY:
+        return
     init_db()
     with connect() as db:
         db.execute(_STOP_TABLE_DDL)
+    _STOP_TABLE_READY = True
 
 
 def request_stop(user_id: int, run_id: int) -> None:
@@ -80,11 +91,18 @@ def is_stop_requested(user_id: int, run_id: int) -> bool:
         return False
     try:
         _ensure_stop_table()
+        global _last_stop_cleanup_at
+        import time as _t
+        _now = _t.monotonic()
+        _do_cleanup = (_now - _last_stop_cleanup_at) >= _STOP_CLEANUP_INTERVAL
         with connect() as db:
-            db.execute(
-                "delete from stop_signals where requested_at < now() - (interval '1 second' * %s)",
-                (int(STOP_SIGNAL_MAX_AGE_SEC),),
-            )
+            if _do_cleanup:
+                # [round-4-P2] 过期行清理从「每 token 都删」改为节流 ≥30s 一次,避免热路径无谓 DELETE。
+                _last_stop_cleanup_at = _now
+                db.execute(
+                    "delete from stop_signals where requested_at < now() - (interval '1 second' * %s)",
+                    (int(STOP_SIGNAL_MAX_AGE_SEC),),
+                )
             row = db.execute(
                 """
                 select 1

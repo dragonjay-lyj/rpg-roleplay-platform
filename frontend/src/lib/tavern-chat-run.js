@@ -375,6 +375,15 @@ export function startTavernRun(cfg) {
         if (!last || last.role !== 'assistant') return h;
         return [...h.slice(0, -1), { ...last, streaming: false, streaming_done: true }];
       });
+      // reasoning 流中断:已有助手气泡但被中断(如服务端强制截断),需恢复草稿并提示用户。
+      if (data && data.interrupted) {
+        restoreFailedDraft();
+        const msg = cfg.doneEmptyMsg ? cfg.doneEmptyMsg(true) : '本轮已中断,已恢复你的输入。';
+        setHasError(msg);
+        toast?.('生成中断', { kind: 'warn', detail: msg, duration: 4500, code: 'interrupted' });
+        rc.sse = null;
+        return;
+      }
       // 宿主成功收尾附加(pages:保存本轮 toolOps 快照 / setElapsedMs / setLastUsage)。
       // 在 applyState 之前调,以便 pages 把 lastTurnToolOps 写好供 applyState 回填。
       if (onDoneExtra) { try { onDoneExtra(data); } catch (_) {} }

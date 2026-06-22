@@ -369,9 +369,15 @@ def _check_base_url(base_url: str) -> None:
         return
     try:
         from platform_app.user_credentials import _validate_base_url
-        _validate_base_url(base_url)
     except ImportError:
-        pass  # 依赖缺失时不静默放行:仍走运行时 safe_httpx 纵深防御
+        # [round-4-P2] 依赖缺失(部分安装)时写时闸失效 → 至少留痕,不再静默。运行时仍有
+        #   safe_httpx 纵深防御兜底,故不硬失败阻断 admin 配置,但要可观测。
+        import logging
+        logging.getLogger(__name__).warning(
+            "[model_registry] _validate_base_url 不可导入,base_url 写时 SSRF 预校验被跳过(运行时 safe_httpx 兜底): %s", base_url
+        )
+        return
+    _validate_base_url(base_url)  # 非法地址抛 ValueError → 上抛拒绝写入(SSRF 写时闸)
 
 
 def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:

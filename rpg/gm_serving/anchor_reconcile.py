@@ -681,7 +681,10 @@ def _reconcile_impl(
         valid_hits.append({"anchor_key": key, "drift_score": max(0.0, min(1.0, drift))})
         if len(valid_hits) >= _MAX_MARK_PER_TURN:
             break  # 保守:单回合最多标 N 个
-    if _anchor_pace(user_id) and len(valid_hits) < _MAX_MARK_PER_TURN:
+    # [round-4-P2] _deterministic_intro_hits 是纯字符串匹配(角色名现身即「首次登场」锚点到达),
+    #   不依赖 LLM,应始终运行——原来锁在 _anchor_pace(user_id) 闸后,flag OFF 时 intro 锚点退回保守
+    #   LLM 判定会漏标/拖慢、卡住进度。pace flag 只该管章窗收窄/标记速率,不该管这条确定性路径。
+    if len(valid_hits) < _MAX_MARK_PER_TURN:
         for h in _deterministic_intro_hits(save_id, pending, text):
             k = (h.get("anchor_key") or "").strip()
             if k and k in win_by_key and k not in seen:
@@ -696,12 +699,25 @@ def _reconcile_impl(
         return 0
 
     # 5. 确定性落库:锚点标记 + 有界估章推进 + 死亡失效,同一 (user,save) scope lock + 单连接内。
-    est_prev = int(est_ctx.get("prev")) if est_ctx else 1
+    est_prev_ctx = int(est_ctx.get("prev")) if est_ctx else None
     def _do(conn: Any) -> int:
         marked = _apply_hits(conn, save_id, user_id, valid_hits) if valid_hits else 0
         if do_estimate:
+            # [round-4-P2] est_ctx 不可用(recorder_bridge 注入 _judge 路径里 _load_estimate_context
+            #   失败)时,est_prev 原硬编码 1 → ceiling=1+CAP 把已在更后章节玩家的进度天花板压回、卡住
+            #   推进。改为锚到权威当前进度(与 _load_estimate_context 同源:game_sessions.worldline)。
+            _ep = est_prev_ctx
+            if _ep is None:
+                try:
+                    r = conn.execute(
+                        "select worldline->>'progress_chapter' as pc from game_sessions where save_id=%s",
+                        (save_id,),
+                    ).fetchone()
+                    _ep = max(1, int(r["pc"])) if (r and r.get("pc") is not None) else 1
+                except Exception:
+                    _ep = 1
             # 锚点标记后 floor 可能已升,_apply_estimate 内重查 floor 算 ceiling。
-            _apply_estimate(conn, save_id, est_prev, int(estimated_chapter))
+            _apply_estimate(conn, save_id, _ep, int(estimated_chapter))
         if do_death:
             _invalidate_dead_entity_anchors(conn, save_id, text)
         return marked

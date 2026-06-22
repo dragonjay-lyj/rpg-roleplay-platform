@@ -260,7 +260,9 @@ def _get_vertex_client(user_id: int | None = None):
         return client
     except Exception as e:
         log.warning("[embedding] vertex client init failed: %s", e)
-        _VERTEX_CLIENT_CACHE[cache_key] = None
+        # [round-4-P1] 同上:不缓存 None。原代码在此 except 把瞬时构造失败(网络超时/
+        # 临时鉴权抖动)永久缓存成 None → 之后该 user_id 在本 worker 生命周期内永远拿不到
+        # client、embedding 静默禁用直到重启(workers=2 时两进程可各自中毒,无自愈)。
         return None
 
 

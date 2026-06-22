@@ -1158,7 +1158,10 @@ async def api_import_tavern_chat(request: Request, user=Depends(require_user)):
     raw_body = await request.body()
     if len(raw_body) > 16 * 1024 * 1024:
         return json_response({"ok": False, "error": "文件过大"}, status_code=400)
-    body = json.loads(raw_body)
+    try:
+        body = json.loads(raw_body)
+    except (json.JSONDecodeError, ValueError):
+        return json_response({"ok": False, "error": "请求体须为 JSON 格式"}, status_code=400)
     from .. import tavern_chats, save_io
 
     jsonl_text = body.get("jsonl") or ""

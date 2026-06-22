@@ -1067,7 +1067,9 @@ function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, h
             msgIndex={idx} saveId={saveId} commitId={commitId}
             thinking={m._thinking}
             images={imagesByKey[String(idx)] || (idx === lastAsstIdx ? imagesByKey['__last'] : undefined)}
-            streaming={!m.streaming_done && idx === totalLen - 1 && runState.running} /> :
+            streaming={!m.streaming_done && idx === totalLen - 1 && runState.running}
+            toolOps={m._toolOps || m.tool_ops || []}
+            renderTool={(ops) => <ToolCallBlock ops={ops} />} /> :
           <PlayerBlock key={`pl-${idx}`} text={m.content} ts={m.ts} attachments={m.attachments}
             msgIndex={idx} saveId={saveId} commitId={commitId} />;
         })}

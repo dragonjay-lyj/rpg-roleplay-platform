@@ -835,6 +835,8 @@ export function MobileSaves({ nav }) {
         .filter(s => (s && (s.save_kind || 'game')) !== 'tavern')
         .map(normSave);
       setSaves(list);
+      // rename/activate 后刷新 selectedSave 快照,避免详情面板显示旧数据。
+      setSelectedSave(s => s ? (list.find(x => x.id === s.id) || s) : s);
     } catch (_) { setSaves([]); }
     try {
       const s = await window.api.scripts.list();

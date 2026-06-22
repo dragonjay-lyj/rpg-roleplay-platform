@@ -87,18 +87,24 @@ def _redis_sem_acquire(timeout_sec: int = 1800) -> tuple[bool, str | None]:
 
 
 def _redis_sem_release(used_redis: bool, token: str | None) -> None:
-    """归还令牌（与 _redis_sem_acquire 对称）。"""
-    if used_redis and token is not None:
-        try:
-            from redis_bus import sem_release
-            sem_release(_IMPORT_SEM_NAME, token)
-            return
-        except Exception:
-            pass
-    # 回退：释放进程内 Semaphore（若 acquire 时用了 Redis 但 release 失败，也补释放进程内槽位
-    # 避免进程内 sem 计数器失衡，但正常路径此处不会被同时触发两侧）
-    if not used_redis:
-        _IMPORT_GLOBAL_SEM.release()
+    """归还令牌（与 _redis_sem_acquire 对称）。
+
+    [round-4-P2] 释放必须与 acquire 走的同一侧严格对称,否则会过度释放:
+      - used_redis=True：只还 Redis 令牌。绝不能再 release 进程内 Semaphore——
+        acquire 时根本没占进程内槽位,补释放会把计数器顶过容量(并发超限)。
+        若此刻 Redis 不可达,令牌暂时无法归还(下次 sem_init 幂等补种时,池空才补;
+        极端情况丢 1 个令牌,best-effort 限流可接受,绝不拿过度释放去换)。
+      - used_redis=False：acquire 走了进程内 Semaphore,这里对称 release。
+    """
+    if used_redis:
+        if token is not None:
+            try:
+                from redis_bus import sem_release
+                sem_release(_IMPORT_SEM_NAME, token)
+            except Exception:
+                pass  # Redis 抖动:宁可丢令牌也不过度释放进程内槽位
+        return
+    _IMPORT_GLOBAL_SEM.release()
 
 # ── 进程内 thread 跟踪表（best-effort）──────────────────────────────
 # 多 worker 部署时只对当前 worker 可见，

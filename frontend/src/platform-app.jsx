@@ -1441,6 +1441,20 @@ function MeEditProfile() {
     return () => { cancelled = true; };
   }, []);
 
+  // [round-4-P2] reactive user 可能在 mount 之后才就绪;form 的 useStatePL 初值只取一次,
+  //   会把 display_name/username/email/bio 锁成 mount 时的空值。这里在 user 就绪后【仅填空字段】,
+  //   不覆盖用户已输入或上面 profile() 已合并的值(用 `f.x || user.x` 幂等回填)。
+  useEffectPL(() => {
+    setForm(f => ({
+      ...f,
+      display_name: f.display_name || user.display_name || "",
+      username: f.username || user.username || "",
+      email: f.email || user._raw?.email || "",
+      bio: f.bio || user.bio || "",
+    }));
+    if (user._raw?.avatar_url && !avatarUrl) setAvatarUrl(user._raw.avatar_url);
+  }, [user.id, user.username, user.display_name]);
+
   const onSave = async () => {
     setSaving(true);
     try {
@@ -1846,18 +1860,11 @@ function MeUserSettings() {
     }
   };
 
-  const onSavePreference = async (key, value) => {
-    try { await window.api.account.preferences({ [key]: value }); } catch (_) {}
-  };
-  // Persist preference changes on each toggle:
-  // 值为 null 时说明后端偏好尚未加载完成，跳过（避免 mount 时以默认值覆盖已存设置）
-  useEffectPL(() => { if (twofa !== null && prefLoaded) onSavePreference("two_fa", twofa); }, [twofa, prefLoaded]);
-  useEffectPL(() => { if (emailNotif !== null && prefLoaded) onSavePreference("email_notif", emailNotif); }, [emailNotif, prefLoaded]);
-  useEffectPL(() => { if (publicProfile !== null && prefLoaded) onSavePreference("public_profile", publicProfile); }, [publicProfile, prefLoaded]);
-  useEffectPL(() => { if (searchable !== null && prefLoaded) onSavePreference("searchable", searchable); }, [searchable, prefLoaded]);
-  useEffectPL(() => { if (shareUsage !== null && prefLoaded) onSavePreference("share_usage", shareUsage); }, [shareUsage, prefLoaded]);
-  useEffectPL(() => { if (shareCrash !== null && prefLoaded) onSavePreference("share_crash", shareCrash); }, [shareCrash, prefLoaded]);
-  useEffectPL(() => { if (adsTrack !== null && prefLoaded) onSavePreference("ads_track", adsTrack); }, [adsTrack, prefLoaded]);
+  // [round-4-P2] 移除原 7 个 useEffectPL「值变即 onSavePreference」持久化副作用:
+  //   ① 与 round-3 起 tog 走 save(field,v) 真正落库形成【双写】(每次切换写两次后端);
+  //   ② prefLoaded 翻 true 时 7 个 effect 全触发 → 每次进页都把 7 项偏好回写一遍(#39);
+  //   ③ load() 拉取失败的 catch 设安全默认值后,effect 会把这些默认值写回后端、覆盖真实偏好(#7)。
+  //   现单一持久化路径 = tog 内 save(field,v)(useAutoSave 防抖 + toast),仅用户实际切换才写。
 
   return (
     <CSSpaceBetween size="l" data-cap-anchor="me.settings">

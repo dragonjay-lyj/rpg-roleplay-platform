@@ -115,17 +115,12 @@ async def api_verify_email(request: Request):
         return json_response({"ok": False, "error": "email 和 code 不能为空"}, status_code=400)
     # SEC(L-5): per-IP 软上限,与 email 维度失败计数器叠加做纵深防御(防多 IP 轮询放大暴破)。
     _ip_key = _client_ip(request)
-    _redis_available = False
-    try:
-        import redis_bus as _rb
-        _c = _rb.rate_incr(f"verifyip:{_ip_key}", 600)
-        _redis_available = True
-        if _c and _c > 60:
-            return json_response({"ok": False, "error": "尝试过于频繁,请稍后再试"}, status_code=429)
-    except (ConnectionError, TimeoutError, OSError) as _redis_exc:
-        # [Fix-3] Redis 不可达时用进程内滑动窗口兜底,阈值与 Redis 路径保持一致。
-        import logging as _log_auth
-        _log_auth.getLogger("rpg.auth").warning("[rate-limit] Redis unavailable, using in-process fallback: %s", _redis_exc)
+    # [round-4-P1] rate_incr 内部吞掉所有异常并返回 None(从不抛 ConnectionError/Timeout),
+    #   故原 except(ConnectionError…) 永不触发 → Redis 宕机时限流完全失效。改为按返回值判断:
+    #   None=Redis 不可用 → 走进程内滑动窗口兜底;有值 → 用 Redis 计数。
+    import redis_bus as _rb
+    _c = _rb.rate_incr(f"verifyip:{_ip_key}", 600)
+    if _c is None:
         _now = time.monotonic()
         with _VERIFY_IP_LOCK:
             _bucket = _VERIFY_IP_BUCKETS.setdefault(_ip_key, [])
@@ -134,6 +129,8 @@ async def api_verify_email(request: Request):
             _cnt = len(_bucket)
         if _cnt > _VERIFY_IP_LIMIT:
             return json_response({"ok": False, "error": "尝试过于频繁,请稍后再试"}, status_code=429)
+    elif _c > 60:
+        return json_response({"ok": False, "error": "尝试过于频繁,请稍后再试"}, status_code=429)
     try:
         user, token = _auth.confirm_email_verification(email, code)
         workspace.ensure_default(user["id"])
@@ -292,6 +289,12 @@ async def api_magic_consume(request: Request):
     if not token or not email:
         return json_response({"ok": False, "error": "缺 magic_token 或 email"}, status_code=400)
     ip = _client_ip(request)
+    # [round-4-P2] 与 login()/confirm_login_code() 对齐:先做 per-IP/per-email 限流预检,
+    #   锁定中直接 429,避免每个被锁请求仍打 DB(consume_magic_token 的 allowlist SELECT)。
+    try:
+        _auth._check_rate_limit(ip, email)
+    except _auth.RateLimited as _rl:
+        return json_response({"ok": False, "error": "尝试过于频繁,请稍后再试"}, status_code=429)
     try:
         # Step 1: 校验 magic_token + email 匹配 + 30 天有效期（快速失败预筛，真正消费在 Step 2）
         await asyncio.to_thread(_auth.consume_magic_token, token, email)

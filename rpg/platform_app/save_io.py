@@ -129,15 +129,21 @@ def _strip_id_and_save_id(row: dict[str, Any], extra_strip: tuple[str, ...] = ()
 
 _COL_CACHE: dict[str, frozenset[str]] = {}
 _JSONB_COL_CACHE: dict[str, frozenset[str]] = {}
+# TTL(秒)——迁移后无需重启即可感知新列集
+_COL_CACHE_AT: dict[str, float] = {}
+_JSONB_COL_CACHE_AT: dict[str, float] = {}
+_COL_CACHE_TTL = 60.0
 
 
 def _jsonb_columns(db: Any, table: str) -> frozenset[str]:
-    """该表的 jsonb 列集合(缓存)。导入时 jsonb 列的【标量】值(如 kb_worldline_vars.value=3/turn)
+    """该表的 jsonb 列集合(缓存,TTL=60s)。导入时 jsonb 列的【标量】值(如 kb_worldline_vars.value=3/turn)
     也必须包 Jsonb —— 否则裸标量塞进 jsonb 列 → 'column is of type jsonb but expression is of type
     integer' → 整行失败(kb_worldline_vars 全军覆没,核心存档态进不了 KB)。dict/list 原本就包,这里
-    把标量也覆盖。"""
+    把标量也覆盖。TTL 保证迁移后不重启也能感知新列。"""
+    import time as _time
+    now = _time.monotonic()
     cached = _JSONB_COL_CACHE.get(table)
-    if cached is not None:
+    if cached is not None and now - _JSONB_COL_CACHE_AT.get(table, 0.0) < _COL_CACHE_TTL:
         return cached
     rows = db.execute(
         "select column_name from information_schema.columns "
@@ -146,19 +152,23 @@ def _jsonb_columns(db: Any, table: str) -> frozenset[str]:
     ).fetchall()
     cols = frozenset(r["column_name"] for r in rows)
     _JSONB_COL_CACHE[table] = cols
+    _JSONB_COL_CACHE_AT[table] = now
     return cols
 
 
 def _table_columns(db: Any, table: str) -> frozenset[str]:
-    """返回 table 在 DB 里实际存在的列名集合(来自 information_schema,可信源),带进程内缓存。
+    """返回 table 在 DB 里实际存在的列名集合(来自 information_schema,可信源),带进程内缓存(TTL=60s)。
 
     安全关键:`_build_insert` 把列名直接拼进 SQL 字符串(列名无法参数化)。导入 payload 的
     row 键来自用户上传的 JSON,若原样当列名拼接 → 列名 SQL 注入(可构造 INSERT...SELECT 跨表
     窃取他人存档/凭证)。用本函数把列名**白名单到该表真实列**,目录列名本身可信,彻底堵注入,
     同时保留"容忍 schema 漂移"(未知列静默丢弃)的原意。table 来自 `_STATE_TABLES` 硬白名单。
+    TTL 保证迁移后不重启也能感知新列。
     """
+    import time as _time
+    now = _time.monotonic()
     cached = _COL_CACHE.get(table)
-    if cached is not None:
+    if cached is not None and now - _COL_CACHE_AT.get(table, 0.0) < _COL_CACHE_TTL:
         return cached
     rows = db.execute(
         "select column_name from information_schema.columns "
@@ -169,6 +179,7 @@ def _table_columns(db: Any, table: str) -> frozenset[str]:
     # 「missing field: 0」误导用户,且自包含存档导入半途失败留孤儿剧本)。按列名取。
     cols = frozenset(r["column_name"] for r in rows)
     _COL_CACHE[table] = cols
+    _COL_CACHE_AT[table] = now
     return cols
 
 

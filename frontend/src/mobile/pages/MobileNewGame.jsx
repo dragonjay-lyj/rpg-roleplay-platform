@@ -1087,11 +1087,9 @@ export function MobileNewGame({ nav, scriptId: propScriptId, onDone }) {
         story_intent: storyIntent.trim() || null,
         player_origin: playerOrigin || 'soul',
         ...(identity && playerOrigin !== 'body' ? { identity_known: identityKnown } : {}),
-        // 设置字段(mapping to backend settings schema):
-        foreknowledge_mode: foreknowledge,
-        npc_awareness: npcAwareness,
-        steering_strength: steering,
-        spoiler_guard: spoiler,
+        // 注意:foreknowledge_mode/npc_awareness/steering_strength/spoiler_guard 是
+        // 游戏设置字段,saves.create 的 payload 后端不消费(由 updateSettings 写入),
+        // 已删除以避免后端无效字段警告。
       };
 
       // window.__createAndEnterSave 仅在桌面 PlatformShellCS 注册;移动外壳(MobileRoot)下它 undefined,
@@ -1108,7 +1106,13 @@ export function MobileNewGame({ nav, scriptId: propScriptId, onDone }) {
             steering_strength: steering,
             spoiler_guard: spoiler,
           }, true);
-        } catch (_) { /* 设置写失败不阻断进入游戏 */ }
+        } catch (settingsErr) {
+          // 设置写失败不阻断进入游戏,但给用户非阻塞提示。
+          window.__apiToast?.(
+            `游戏设置未能保存(${settingsErr?.message || '写入失败'}),进入游戏后可在设置中手动调整。`,
+            { kind: 'warn', duration: 5000 }
+          );
+        }
       }
       lsRemove(DRAFT_KEY);
       onDone?.();
@@ -1255,8 +1259,8 @@ export function MobileNewGame({ nav, scriptId: propScriptId, onDone }) {
           {step < TOTAL_STEPS - 1 ? (
             <button
               className="pl-btn-primary"
-              style={{ flex: 2, opacity: canNext ? 1 : 0.45 }}
-              disabled={!canNext || dataLoading}
+              style={{ flex: 2, opacity: (canNext && !submitting) ? 1 : 0.45 }}
+              disabled={!canNext || dataLoading || submitting}
               onClick={() => { if (canNext) setStep(s => s + 1); }}
             >
               {t('mobile.new_game.nav.next')} <Icon name="chevron_right" size={15} />

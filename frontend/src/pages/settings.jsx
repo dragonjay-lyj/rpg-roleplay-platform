@@ -524,11 +524,10 @@ function ModelsSection() {
       await Promise.all(api.models.map(m => {
         const body = { api_id: apiId, model: m.id, visible: ids.includes(m.id) };
         // 同步来的(overlay)模型走 per-user 端点(任何用户可隐藏自己的、re-sync 不重置);
-        // 全局策展模型走全局端点(admin)。
-        const call = m.synced
-          ? window.api.models.meVisibility(body)
-          : window.api.models.visibility(body);
-        return call.catch(() => {});
+        // 全局策展模型走全局端点(admin-only)——非 admin 跳过,避免注定失败的 403。
+        if (m.synced) return window.api.models.meVisibility(body).catch(() => {});
+        if (!isAdminUser) return Promise.resolve();  // 非 admin 无权改全局可见性
+        return window.api.models.visibility(body).catch(() => {});
       }));
     }
   };
@@ -575,6 +574,8 @@ function ModelsSection() {
           window.__apiToast?.(t('settings.models.delete_key_ok'), { kind: 'ok' });
           setSelectedApiId(null);
           setApis(arr => arr.map(a => a.id === selectedApi.id ? { ...a, key_set: false, key_hint: '—' } : a));
+          // 删除凭证后从 autoSyncedRef 移除,允许下次重新配置 key 后重新 auto-sync。
+          autoSyncedRef.current.delete(selectedApi.id);
           if (typeof window.__refreshPlatform === 'function') { try { await window.__refreshPlatform(); } catch (_) {} }
         } catch (e) { window.__apiToast?.(t('settings.models.delete_key_fail'), { kind: 'danger', detail: e?.message }); }
       }}
@@ -2319,6 +2320,9 @@ function ModelParamsSection() {
       </SetRow>
 
       <SetRow label={t('settings.modelparams.stop')} description={t('settings.modelparams.stop_desc')}>
+        {/* stop 以竖线分隔串存入 user_preferences(如 "player:|system:")。
+            Preview JSON 仅展示拆分后的数组形态;后端当前不消费此字段(尚未接入 LLM call),
+            存储格式保持竖线串,待后端接入时在 app.py 里 split("|") 转数组传给模型。 */}
         <CSInput value={params.stop} onChange={({ detail }) => u("stop", detail.value)}
           placeholder="player:|system:" />
       </SetRow>

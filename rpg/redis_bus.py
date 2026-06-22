@@ -213,9 +213,49 @@ def sem_init(name: str, capacity: int) -> bool:
         return False
 
 
+_BLOCKING_CLIENT = None
+
+
+def _get_blocking_client():
+    """[round-4-P1] 专供 BLPOP 等阻塞命令的独立 redis 客户端。
+
+    get_sync_client() 为限流等非阻塞命令设了 socket_timeout=2,但该 socket 读超时
+    会在 2s 后中断 BLPOP 的服务端等待(redis-py 把 socket.timeout 抛成 TimeoutError),
+    导致 sem_acquire 恒在 2s 后返回 None → 永远回退进程内信号量,跨进程令牌池形同虚设
+    (多 worker 下导入并发上限变 N×capacity)。故阻塞命令必须用不设 socket_timeout 的
+    连接:由 BLPOP 自身的 timeout 参数(服务端)+ TCP keepalive 兜底死连接。"""
+    global _BLOCKING_CLIENT
+    if _BLOCKING_CLIENT is not None:
+        return _BLOCKING_CLIENT
+    url = redis_url()
+    if not url:
+        return None
+    with _INIT_LOCK:
+        if _BLOCKING_CLIENT is not None:
+            return _BLOCKING_CLIENT
+        try:
+            import redis
+
+            client = redis.Redis.from_url(
+                url,
+                socket_timeout=None,          # 阻塞命令不能设 socket 读超时
+                socket_connect_timeout=0.5,
+                socket_keepalive=True,        # 死连接由 keepalive 探测,不靠 socket_timeout
+                decode_responses=True,
+                health_check_interval=30,
+            )
+            client.ping()
+            _BLOCKING_CLIENT = client
+            log.info("[redis] blocking client connected")
+        except Exception as exc:
+            log.warning("[redis] blocking client connect failed: %s", exc)
+            return None
+    return _BLOCKING_CLIENT
+
+
 def sem_acquire(name: str, timeout_sec: int = 300) -> str | None:
     """阻塞取一个令牌(BLPOP,跨进程)。返回令牌(release 时归还);超时/不可用返回 None。"""
-    cli = get_sync_client()
+    cli = _get_blocking_client()
     if cli is None:
         return None
     try:

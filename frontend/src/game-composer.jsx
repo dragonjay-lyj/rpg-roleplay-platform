@@ -549,6 +549,9 @@ function EffortSection({ selectedKey }) {
   // selectedKey 格式: "api_id::model_real_name" — backend pref key 用 "api_id:model_id"
   const [effort, setEffort] = useStateC('high');
   const [busy, setBusy] = useStateC(false);
+  const cancelledRef = React.useRef(false);  // 卸载守卫:卸载后跳过 setBusy
+  const reqIdRef = React.useRef(0);          // RMW 竞态守卫:只让最新请求写回
+  React.useEffect(() => { cancelledRef.current = false; return () => { cancelledRef.current = true; }; }, []);
   const prefKey = React.useMemo(() => {
     if (!selectedKey) return '';
     const [api, model] = selectedKey.split('::');
@@ -574,18 +577,21 @@ function EffortSection({ selectedKey }) {
 
   const onPickEffort = async (id) => {
     if (!prefKey || busy) return;
+    const myReq = ++reqIdRef.current;  // 竞态守卫:只让最新请求的结果生效
     setBusy(true);
     setEffort(id);  // 乐观更新
     try {
       // 先拉现有 model_effort 字典,patch 后整段 POST 回去
       const profileR = await window.api.account.profile();
+      if (reqIdRef.current !== myReq) return;  // 被更新请求取代,bail out
       const existing = ((profileR && profileR.preferences && profileR.preferences.model_effort) || {});
       const next = { ...existing, [prefKey]: id };
       await window.api.account.preferences({ preferences: { model_effort: next } });
+      if (reqIdRef.current !== myReq) return;  // 再次确认
       window.__apiToast?.(t('game.composer.effort_saved', { id }), { kind: 'ok', duration: 1500 });
     } catch (e) {
       window.__apiToast?.(t('game.composer.effort_save_failed'), { kind: 'danger', detail: e?.message });
-    } finally { setBusy(false); }
+    } finally { if (!cancelledRef.current) setBusy(false); }
   };
 
   if (!prefKey) return null;

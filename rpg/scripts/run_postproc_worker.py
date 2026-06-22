@@ -36,6 +36,9 @@ log = logging.getLogger("rpg.postproc_worker")
 MAX_TASKS_PER_POLL = 5
 MAX_ATTEMPTS = 3
 POLL_TIMEOUT_SEC = 30  # NOTIFY 没来时最多等 30s 再 poll 一次
+_REAP_INTERVAL = 300.0  # _reap_stuck_running 最多每 5 分钟调一次
+
+_last_reap_at: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -204,12 +207,18 @@ def _reap_stuck_running(conn: psycopg.Connection) -> None:
 
 async def consume(conn: psycopg.Connection) -> None:
     """主循环:LISTEN/NOTIFY + 兜底 30s poll。autocommit 连接,每次 DML 单句提交。"""
+    global _last_reap_at
+    import time as _time
     conn.execute("LISTEN chat_postproc_new")
     log.info("[postproc] worker ready, LISTEN chat_postproc_new")
     _reap_stuck_running(conn)  # 启动即回收上次崩溃残留的 running
+    _last_reap_at = _time.monotonic()
 
     while True:
-        _reap_stuck_running(conn)
+        now = _time.monotonic()
+        if now - _last_reap_at >= _REAP_INTERVAL:
+            _reap_stuck_running(conn)
+            _last_reap_at = _time.monotonic()
         # 不用 FOR UPDATE SKIP LOCKED — 认领路径已改为 _process_one 里的 CAS UPDATE...RETURNING。
         # SELECT 只是候选行扫描，实际认领由 CAS 原子完成；多 worker 同时读到同一行时，
         # CAS 保证只有一个 worker 能置 running，其余跳过（claimed is None）。

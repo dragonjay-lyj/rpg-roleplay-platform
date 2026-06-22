@@ -1553,7 +1553,12 @@ def _owned_script(db, script_id: int, user_id: int):
 
 @router.get("/api/scripts/{script_id}/graph")
 async def api_script_graph(script_id: int, user=Depends(require_user)):
-    """Phase E.1 复核图:规范实体 + 世界线 DAG + 时间线 + 摄入质量 flag。"""
+    """Phase E.1 复核图:规范实体 + 世界线 DAG + 时间线 + 摄入质量 flag。
+
+    保持 owner-only:响应包含 import_report(extraction quality review 元数据,
+    含 needs_review/author_notes/weird_titles/gaps/cleaning)和 review_status,
+    是编辑工作流专属字段,不对订阅者开放。
+    """
     with connect() as db:
         s = _owned_script(db, script_id, user["id"])
         if not s:
