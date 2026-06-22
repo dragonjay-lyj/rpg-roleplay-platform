@@ -101,8 +101,21 @@ class Supervisor extends EventEmitter {
     const want = (require('../package.json').version) || 'dev';
     let have = '';
     try { have = await fsp.readFile(P.versionStamp(), 'utf8'); } catch (_) {}
-    if (have.trim() === want && fs.existsSync(P.backendCwd())) return; // 已是当前版本
-    this._log('supervisor', `同步后端源码副本 → ${dst}(版本 ${want})`);
+    // [#81] 仅靠版本号判断会漏同步:若某版本被【同号重发】(旧坏码 → 修复码,如 1.1.1 首发坏、
+    //   后重出),版本戳相同 → 跳过同步 → 残留旧 startup.py → bootstrap_local_account NameError →
+    //   桌面 app 全 401 不可用。追加关键文件内容指纹校验:模板与已同步副本的 core/startup.py
+    //   内容不一致即判定副本陈旧、强制重新同步(读两个小文件,开销可忽略)。
+    let stale = false;
+    if (have.trim() === want && fs.existsSync(P.backendCwd())) {
+      try {
+        const sentinel = path.join('rpg', 'core', 'startup.py');
+        const a = await fsp.readFile(path.join(tmpl, sentinel), 'utf8');
+        const b = await fsp.readFile(path.join(dst, sentinel), 'utf8');
+        stale = (a !== b);
+      } catch (_) { stale = true; }  // 读不到关键文件 = 视为陈旧,重同步
+      if (!stale) return;            // 版本一致且关键文件一致 → 跳过
+    }
+    this._log('supervisor', `同步后端源码副本 → ${dst}(版本 ${want}${stale ? '·检测到副本陈旧强制刷新' : ''})`);
     await fsp.mkdir(dst, { recursive: true });
     // merge-copy:覆盖模板文件,但不删除副本里多出来的运行时产物(platform_data 等)
     await fsp.cp(tmpl, dst, { recursive: true, force: true });
