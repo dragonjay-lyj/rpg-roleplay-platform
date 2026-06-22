@@ -332,10 +332,13 @@ function WelcomeModal({ open, firstTime = false, onClose }) {
   const [busy, setBusy] = useStatePL(false);
   const reactiveUserWM = useReactiveUser();
   // co_builder 复选框：默认勾选（= 参加），取消勾选写入 opt_out=true
-  // 初始值：co_builder_opt_out=false → 勾选；co_builder_opt_out=true → 不勾选
-  const [coBuilderChecked, setCoBuilderChecked] = useStatePL(
-    () => !reactiveUserWM?.co_builder_opt_out
-  );
+  // 不用懒初始化——user 数据到达前 reactiveUserWM 为 null，捕获的 opt_out 是 undefined → 恒 true
+  const [coBuilderChecked, setCoBuilderChecked] = useStatePL(true);
+  useEffectPL(() => {
+    if (reactiveUserWM?.co_builder_opt_out != null) {
+      setCoBuilderChecked(!reactiveUserWM.co_builder_opt_out);
+    }
+  }, [reactiveUserWM]);
   // 是否展示 co_builder 区：仅 firstTime + 普通用户（非 admin/vip_user）+ 已通过白名单注册
   const isRegularUser = reactiveUserWM && reactiveUserWM.role === 'user';
   const showCoBuilder = firstTime && isRegularUser && reactiveUserWM?.is_co_builder === true;
@@ -539,7 +542,7 @@ function DialogHost() {
         : <CSFormField label={dlg.label}>
             <CSInput value={dlg.value} autoFocus
               onChange={({ detail }) => setDlg((d) => ({ ...d, value: detail.value }))}
-              onKeyDown={({ detail }) => { if (detail.key === 'Enter') setDlg(d => { close(d.value || ''); return d; }); }} />
+              onKeyDown={({ detail }) => { if (detail.key === 'Enter') close(dlg.value || ''); }} />
           </CSFormField>}
     </CSModal>
   );
@@ -574,7 +577,7 @@ function useAutoSave(label, scope) {
       }
       try {
         await window.api.account.preferences(batch);
-        window.toast?.(`${label}已保存`, { kind: "ok", detail: scope ? `${scope} · ${field}` : field, duration: 2000 });
+        window.toast?.(`${label}已保存`, { kind: "ok", detail: Object.keys(batch).join(', '), duration: 2000 });
       } catch (e) {
         window.toast?.(`${label}保存失败`, { kind: "danger", detail: e?.message || "网络错误", duration: 3000 });
       }

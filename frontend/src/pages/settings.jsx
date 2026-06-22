@@ -197,56 +197,20 @@ function PrefSection() {
 function ExtractorSection() {
   const { t } = useTranslation();
   const [enabled, setEnabled] = useStatePL(false);
-  // Wave 11.5-A: 旧默认是 "vertex_ai",改为统一的 "agent_platform"(后端 v024 migration
-   //   会把 user_credentials.api_id = 'vertex'/'vertex_ai' 自动改名)。
-  const [apiId, setApiId] = useStatePL("agent_platform");
-  const [modelRealName, setModelRealName] = useStatePL("");
-  const [apis, setApis] = useStatePL([]);
   const save = useAutoSave(t('settings.extractor.title'), "extractor");
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [profile, models] = await Promise.all([
-          window.api.account.profile(),
-          window.api.models.list().catch(() => ({ apis: [] })),
-        ]);
+        const profile = await window.api.account.profile();
         if (cancelled) return;
         const p = (profile && profile.preferences) || {};
         if (typeof p["extractor.enabled"] === "boolean") setEnabled(p["extractor.enabled"]);
-        if (p["extractor.api_id"]) setApiId(p["extractor.api_id"]);
-        if (p["extractor.model_real_name"]) setModelRealName(p["extractor.model_real_name"]);
-        // /api/models 真实返回 shape: {ok, models: {apis:[...]}, selected}
-        // 旧代码把 models 当扁平对象 → setApis(非数组) → apis.find 崩。
-        // 改为先解嵌套 models.models.apis，再兼容历史扁平 .apis。
-        const rawApis = models?.models?.apis
-          ?? (Array.isArray(models?.apis) ? models.apis : null)
-          ?? [];
-        setApis(Array.isArray(rawApis) ? rawApis : []);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Wave 11.5-A: 兼容老 profile 里仍存 "vertex"/"vertex_ai" 的 api_id —
-  // 匹配时把它折成 "agent_platform" 再找 currentApi,避免下拉默认空。
-  const _normApi = (id) => (id === "vertex" || id === "vertex_ai") ? "agent_platform" : id;
-  const currentApi = apis.find(a => _normApi(a.api_id || a.id) === _normApi(apiId));
-  const modelList = (currentApi?.models || currentApi?.entries || []);
-  // 推荐 provider 排前，未在 /api/models 出现的兜底也保留（用户可能未配 agent_platform/anthropic 但仍要选）
-  // Wave 11.5-A: vertex_ai → agent_platform 统一命名。
-  const apiOptions = [];
-  const seen = new Set();
-  for (const preferred of ["agent_platform", "anthropic"]) {
-    apiOptions.push({ id: preferred, name: preferred === "agent_platform" ? "Agent Platform（JSON mode）" : "Anthropic（native tool_use）" });
-    seen.add(preferred);
-  }
-  for (const a of apis) {
-    const aid = a.api_id || a.id;
-    if (!aid || seen.has(aid)) continue;
-    apiOptions.push({ id: aid, name: (a.display_name || a.name || aid) + "（JSON mode）" });
-    seen.add(aid);
-  }
   return (
     <SetGroup title={t('settings.extractor.title')}>
       <SetRow label={t('settings.extractor.enable')} description={t('settings.extractor.enable_desc')}>

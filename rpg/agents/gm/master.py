@@ -384,13 +384,12 @@ class GameMaster:
                 display_kind=api_id, user_id=user_id, api_id=api_id,
             )
         else:
-            from core.vertex_sa import load_sa_credentials as _lsa
-            _creds, _ = _lsa(user_id)
-            if _creds is not None:
-                self._backend = _VertexBackend(model=model, user_id=user_id)
-            else:
-                log.warning(f"[GM] 未知 kind={kind}，降级到 Anthropic")
-                self._backend = _AnthropicBackend(user_id=user_id)
+            # GM 严格 BYOK:未知/未配置的 provider kind 绝不静默回退平台 Vertex SA / Anthropic env key
+            # (那会用平台凭证替用户跑 LLM = 计费泄漏 + 用户没选的模型)。直接报错,暴露目录配置问题。
+            raise ValueError(
+                f"不支持的模型供应商 kind={kind!r}(api_id={api_id!r})。"
+                "请在模型目录检查该 provider 的 kind,或为其凭证填 base_url(按 OpenAI 兼容路由)。"
+            )
 
     # ── 构建 system prompt ────────────────────────────────────────
     def _build_system(self, style_profile: dict | None = None) -> str:

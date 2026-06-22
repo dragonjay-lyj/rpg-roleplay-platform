@@ -492,6 +492,12 @@ async def api_save_anchor_satisfy(save_id: int, anchor_key: str, user=Depends(re
                     {"ok": False,
                      "error": f"该锚点在第 {src_ch} 章,超出当前进度窗口,暂不能提前标记(防剧透)。"},
                     status_code=409)
+            # 对称下界:早于当前进度窗口起点的锚点不应手动标记(原读了 win_min 却从未使用 → 漏判)。
+            if isinstance(src_ch, int) and isinstance(win_min, int) and src_ch < win_min:
+                return json_response(
+                    {"ok": False,
+                     "error": f"该锚点在第 {src_ch} 章,早于当前进度窗口起点,无法手动标记。"},
+                    status_code=409)
 
             # 当前最大 turn(与 _t_mark_anchor_satisfied 一致默认)
             tr = db.execute(

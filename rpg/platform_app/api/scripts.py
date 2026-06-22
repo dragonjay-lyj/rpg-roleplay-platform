@@ -890,10 +890,8 @@ async def api_set_script_cover_url(request: Request, script_id: int, user=Depend
             "select 1 from scripts where id = %s and owner_id = %s",
             (script_id, user_id),
         ).fetchone()
-    if not owned:
-        return json_response({"ok": False, "error": "无权操作该剧本"}, status_code=403)
-
-    with connect() as db:
+        if not owned:
+            return json_response({"ok": False, "error": "无权操作该剧本"}, status_code=403)
         db.execute(
             "update scripts set cover_image_url = %s where id = %s and owner_id = %s",
             (safe_url, script_id, user_id),

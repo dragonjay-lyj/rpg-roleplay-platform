@@ -1131,12 +1131,19 @@ function App() {
             }
             return out.trimEnd();
           };
-          setHistory((h) => {
-            const last = h[h.length - 1];
-            if (!last || last.role !== 'assistant') return h;
-            const cleaned = stripOps(last.content || '');
-            return [...h.slice(0, -1), { ...last, content: cleaned, streaming: false, streaming_done: true }];
-          });
+          // 若 on_done payload 包含服务端最终 history,直接用服务端版本(已是净内容),
+          // 不必在前端再 stripOps 并写 streaming_done — 否则 React 18 批处理中两次
+          // setHistory 并发,最后一次(payload.history)覆盖前一次但前一次的 streaming_done 丢失。
+          // 只在 payload 无 history 时才回退到前端 strip+标记。
+          const _payloadForStrip = (data && data.status) || null;
+          if (!(_payloadForStrip && Array.isArray(_payloadForStrip.history))) {
+            setHistory((h) => {
+              const last = h[h.length - 1];
+              if (!last || last.role !== 'assistant') return h;
+              const cleaned = stripOps(last.content || '');
+              return [...h.slice(0, -1), { ...last, content: cleaned, streaming: false, streaming_done: true }];
+            });
+          }
           setRunState((r) => {
             // 修: rawSteps 里所有 status='running' 的步骤 mark 'done' — 否则最后那步
             // ("主 GM 正在读取上下文并生成正文")永远是 pulse 状态,看起来像卡死。

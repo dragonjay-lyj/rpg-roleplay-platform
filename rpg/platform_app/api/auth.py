@@ -2,8 +2,17 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+
+# [Fix-3] 进程内 per-IP 回退计数器(Redis 不可用时兜底)
+# 结构与 auth.py 中登录限流的 _FAIL_BUCKETS_IP/_FAIL_LOCK 同构
+_VERIFY_IP_BUCKETS: dict[str, list[float]] = {}  # ip → [请求时间戳...]
+_VERIFY_IP_LOCK = threading.Lock()
+_VERIFY_IP_LIMIT = 60        # 与 Redis 路径阈值一致
+_VERIFY_IP_WINDOW_SEC = 600  # 600s
 
 from .. import auth as _auth
 from .. import workspace
@@ -105,15 +114,26 @@ async def api_verify_email(request: Request):
     if not email or not code:
         return json_response({"ok": False, "error": "email 和 code 不能为空"}, status_code=400)
     # SEC(L-5): per-IP 软上限,与 email 维度失败计数器叠加做纵深防御(防多 IP 轮询放大暴破)。
+    _ip_key = _client_ip(request)
+    _redis_available = False
     try:
         import redis_bus as _rb
-        _c = _rb.rate_incr(f"verifyip:{_client_ip(request)}", 600)
+        _c = _rb.rate_incr(f"verifyip:{_ip_key}", 600)
+        _redis_available = True
         if _c and _c > 60:
             return json_response({"ok": False, "error": "尝试过于频繁,请稍后再试"}, status_code=429)
     except (ConnectionError, TimeoutError, OSError) as _redis_exc:
-        # Redis 不可达时限流降级(进程内无回退计数器);仅吞连接类异常,非连接类异常重抛。
+        # [Fix-3] Redis 不可达时用进程内滑动窗口兜底,阈值与 Redis 路径保持一致。
         import logging as _log_auth
-        _log_auth.getLogger("rpg.auth").warning("[rate-limit] Redis unavailable, skipping per-IP check: %s", _redis_exc)
+        _log_auth.getLogger("rpg.auth").warning("[rate-limit] Redis unavailable, using in-process fallback: %s", _redis_exc)
+        _now = time.monotonic()
+        with _VERIFY_IP_LOCK:
+            _bucket = _VERIFY_IP_BUCKETS.setdefault(_ip_key, [])
+            _bucket.append(_now)
+            _bucket[:] = [t for t in _bucket if _now - t < _VERIFY_IP_WINDOW_SEC]
+            _cnt = len(_bucket)
+        if _cnt > _VERIFY_IP_LIMIT:
+            return json_response({"ok": False, "error": "尝试过于频繁,请稍后再试"}, status_code=429)
     try:
         user, token = _auth.confirm_email_verification(email, code)
         workspace.ensure_default(user["id"])
@@ -284,6 +304,8 @@ async def api_magic_consume(request: Request):
         _set_session_cookie(response, request, token)
         return response
     except ValueError as exc:
+        # [Fix-1] magic token 校验失败计入失败计数,让 per-IP/per-email 锁定生效
+        _auth._record_login_fail(ip, email)
         return json_response({"ok": False, "error": str(exc)}, status_code=403)
 
 

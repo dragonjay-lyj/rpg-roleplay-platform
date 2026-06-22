@@ -1602,7 +1602,7 @@ function SearchDrawer({ open, history, state, onClose }) {
     const world = (state && state.world) || {};
     (Array.isArray(world.known_events) ? world.known_events : []).forEach((evItem, i) => push(t('game.app.search.group_world'), t('game.app.search.known_event_n', { n: i + 1 }), evItem, {}));
     return out.slice(0, 40);
-  }, [q, history, state]);
+  }, [q, history, state, t]);
 
   if (!open) return null;
   const node = (

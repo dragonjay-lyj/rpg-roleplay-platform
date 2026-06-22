@@ -1410,7 +1410,7 @@ function DangerSection({ nav }) {
       {/* 清空存档底部 Sheet */}
       {showClearSheet && (
         <div className="sheet-wrap show">
-          <div className="sheet-scrim" onClick={closeClear} />
+          <div className="sheet-scrim" onClick={clearProgress ? undefined : closeClear} />
           <div className="sheet" style={{ maxHeight: '75%' }}>
             <div className="sheet-grip" />
             <div className="sheet-title" style={{ color: 'var(--danger)' }}>{t('mobile.settings.danger.clear_saves')}</div>

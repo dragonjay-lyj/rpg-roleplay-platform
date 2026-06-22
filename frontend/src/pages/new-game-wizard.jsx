@@ -91,7 +91,7 @@ export function NewGameWizard({ saveId, worldlines = [], onDone }) {
   const finish = async () => {
     try {
       const r = await patchSettings(saveId, vals, true); // is_create=true → 锁死项也可设
-      if (r.applied !== undefined) { onDone && onDone(vals, r); }
+      if (r.applied !== undefined && !r.error) { onDone && onDone(vals, r); }
       else setErr(r.error || '保存失败');
     } catch (e) {
       setErr(e.message || '网络错误');

@@ -132,6 +132,13 @@ def _build_anchor_inputs(
     ch_min = win.get("chapter_min")
     ch_max = win.get("chapter_max")
 
+    # anchor_pace:与 _reconcile_impl 一致收窄候选窗口到 [ch_min, ch_min+_MARK_WINDOW],
+    # 否则备料喂给 LLM 的 pending 含远章锚点 → 误判到达 → 进度跳(本函数原漏了这步收窄)。
+    from core.feature_flags import feature_enabled_for_save
+    from gm_serving.anchor_reconcile import _MARK_WINDOW
+    if feature_enabled_for_save("anchor_pace", int(save_id)) and ch_min is not None:
+        ch_max = int(ch_min) + _MARK_WINDOW
+
     # 窗口内 pending 锚点(与 _reconcile_impl 完全一致)
     pending_raw = list_pending_for_phase(
         int(save_id),

@@ -217,7 +217,9 @@ async def consume(conn: psycopg.Connection) -> None:
         if not rows:
             # 等 NOTIFY 或超时后再 poll
             raw = conn.fileno()
-            readable, _, _ = select.select([raw], [], [], POLL_TIMEOUT_SEC)
+            readable, _, _ = await asyncio.get_event_loop().run_in_executor(
+                None, select.select, [raw], [], [], POLL_TIMEOUT_SEC
+            )
             if readable:
                 # 真正消费已缓冲的 NOTIFY(仅作唤醒提示,内容不用)。原写法 `conn.notifies` 只引用方法
                 # 不调用 → libpq 通知积压不消费。timeout=0 = 排空当前缓冲后立即返回。

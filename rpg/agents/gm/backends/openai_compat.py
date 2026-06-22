@@ -79,7 +79,7 @@ class _OpenAICompatBackend:
         temperature 用模型默认重试**并记忆**,本进程同 (api_id, model) 后续直接不发 →
         当轮即成功,不再失败。stream=True 时请求在 create() 即发出,400 也在此抛,可拦。
         """
-        combo = (self.api_id, self.model_name)
+        combo = (self.api_id, self.model_name, self.user_id)
         if combo in self._fixed_temp_combos:
             kwargs.pop("temperature", None)
         try:
@@ -326,7 +326,7 @@ class _OpenAICompatBackend:
         Provider 不支持 tools 参数时（HTTP 400 / response 异常）→ 标记
         (api_id, model) 为 unsupported，本进程后续直接走 text marker fallback。
         """
-        combo_key = (self.api_id, self.model_name)
+        combo_key = (self.api_id, self.model_name, self.user_id)
         if combo_key in self._unsupported_combos:
             # 已知该 provider/model 不支持 tools → 立即降级到 text marker
             yield from _openai_text_marker_loop(self, system, messages, mcp_tools, max_iterations, max_tokens, mcp_call)

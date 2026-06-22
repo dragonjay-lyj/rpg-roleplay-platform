@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
@@ -988,10 +989,8 @@ async def api_set_persona_image_url(request: Request, card_id: int, user=Depends
             "select 1 from character_cards where id = %s and user_id = %s",
             (card_id, user_id),
         ).fetchone()
-    if not owned:
-        return json_response({"ok": False, "error": "角色卡不存在或无权访问"}, status_code=403)
-
-    with connect() as db:
+        if not owned:
+            return json_response({"ok": False, "error": "角色卡不存在或无权访问"}, status_code=403)
         db.execute(
             "update card_persona_images set is_current = false where card_id = %s",
             (card_id,),
@@ -1156,7 +1155,10 @@ async def api_import_tavern_chat(request: Request, user=Depends(require_user)):
       {"ok": true, "save_id": 123, "commits_imported": N,
        "header": {...}, "preview": [first 3 commits]}
     """
-    body = await request.json()
+    raw_body = await request.body()
+    if len(raw_body) > 16 * 1024 * 1024:
+        return json_response({"ok": False, "error": "文件过大"}, status_code=400)
+    body = json.loads(raw_body)
     from .. import tavern_chats, save_io
 
     jsonl_text = body.get("jsonl") or ""

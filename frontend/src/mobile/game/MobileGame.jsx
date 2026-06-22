@@ -406,6 +406,7 @@ export function MobileGame(gc) {
     _doRollback: async (idx) => {
       try {
         const sid = activeSave?.id;
+        if (!sid) { window.__apiToast?.(t('mobile.game.toast.rollback_fail'), { kind: 'danger' }); return; }
         await window.api.branches.rollbackToMessage(sid, idx);
         gc.reloadState && gc.reloadState();
         window.__apiToast?.(t('mobile.game.toast.rollback_ok'), { kind: 'ok', icon: 'history' });

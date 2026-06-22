@@ -355,6 +355,7 @@ export function startTavernRun(cfg) {
         // 但回复其实已生成并落库 → 旧逻辑直接判「空回复」逼用户刷新。先回查存档,有本轮 assistant
         // 回复就 applyState 渲染;确为空/被中断才提示。与 game-console on_done 同款兜底。
         if (interrupted || !(api && api.game && typeof api.game.state === 'function')) { showEmpty(); return; }
+        if (onDoneExtra) { try { onDoneExtra(data); } catch (_) {} }
         api.game.state().then((d2) => {
           if (!isCurrentRun()) return;
           const hist = (d2 && Array.isArray(d2.history)) ? d2.history : null;

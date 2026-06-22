@@ -498,11 +498,15 @@ def find_model(api: dict[str, Any] | None, model_id: str | None) -> dict[str, An
 
 def first_enabled_api(catalog: dict[str, Any]) -> dict[str, Any]:
     apis = catalog.get("apis") or []
+    if not apis:
+        raise ValueError("model catalog has no APIs")
     return next((api for api in apis if api.get("enabled", True)), apis[0])
 
 
 def first_enabled_model(api: dict[str, Any]) -> dict[str, Any]:
     models = api.get("models") or []
+    if not models:
+        raise ValueError("model catalog has no models")
     return next((model for model in models if model.get("enabled", True)), models[0])
 
 

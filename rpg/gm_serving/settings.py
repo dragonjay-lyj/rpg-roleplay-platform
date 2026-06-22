@@ -88,23 +88,31 @@ def apply_settings(db, save_id: int, updates: dict[str, Any], *, is_create: bool
     sess = _ensure_session(db, save_id)
     if not sess:
         return {"error": "存档无 session"}
-    wl = sess.get("worldline") if isinstance(sess.get("worldline"), dict) else {}
-    wl = dict(wl)
+    wl_existing = sess.get("worldline") if isinstance(sess.get("worldline"), dict) else {}
+    # is_create 不信客户端:客户端传 is_create=true 即可在后续 PATCH 改锁死项(starting_worldline)。
+    # 改由服务端判定——仅当锁死项尚未落库(worldline 不含任何 _LOCKED 键=未初始化)才放行。
+    # 建档首发 PATCH(worldline 空)→ 放行;之后(已含锁死键)→ 任何 is_create 都被忽略。
+    server_uninitialized = not any(k in wl_existing for k in _LOCKED)
+    effective_is_create = bool(is_create) and server_uninitialized
     applied, rejected = {}, {}
     for k, v in (updates or {}).items():
         if k not in _DEFAULTS and k != "progress_chapter":
             rejected[k] = "未知设置"
             continue
-        if k in _LOCKED and not is_create:
+        if k in _LOCKED and not effective_is_create:
             rejected[k] = "建档后锁死"
             continue
         if k in _VALID and v not in _VALID[k]:
             rejected[k] = f"非法值(允许:{sorted(_VALID[k])})"
             continue
-        wl[k] = v
         applied[k] = v
-    db.execute("update game_sessions set worldline=%s, updated_at=now() where save_id=%s",
-               (Jsonb(wl), save_id))
+    # 原子按键合并(jsonb ||):只覆盖本次改的键,不整列读改写 → 避免 workers=2 并发丢更新/抹掉对方键。
+    if applied:
+        db.execute(
+            "update game_sessions set worldline = coalesce(worldline, '{}'::jsonb) || %s::jsonb, "
+            "updated_at=now() where save_id=%s",
+            (Jsonb(applied), save_id),
+        )
     return {"applied": applied, "rejected": rejected}
 
 

@@ -184,7 +184,7 @@ def sem_init(name: str, capacity: int) -> bool:
     try:
         sentinel = f"rpg:sem:{name}:init"
         # SET NX:只有第一个 worker 成功,负责填充令牌池
-        if cli.set(sentinel, "1", nx=True, ex=86400):
+        if cli.set(sentinel, "1", nx=True):
             tokens_key = f"rpg:sem:{name}:tokens"
             cli.delete(tokens_key)
             if capacity > 0:
