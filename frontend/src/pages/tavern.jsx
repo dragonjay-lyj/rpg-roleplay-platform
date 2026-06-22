@@ -110,6 +110,8 @@ export default function TavernPage() {
   const [running, setRunning] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [lastPlayerText, setLastPlayerText] = useState('');
+  const [immersive, setImmersive] = useState(false);
+  const [aiReplyLoading, setAiReplyLoading] = useState(false);
   // Item 3:发消息时后端报「缺 LLM key」(credentials_required / needs_credentials)→ 在 Composer 上方
   // 内联一张引导卡片,让用户就地加 key,然后重试上一条输入(复用 onRetry → lastPlayerText)。
   const [needsCreds, setNeedsCreds] = useState(false);
@@ -129,6 +131,7 @@ export default function TavernPage() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [exportTarget, setExportTarget] = useState(null);  // 导出二次确认
   const [paramsOpen, setParamsOpen] = useState(false);   // 采样参数(模型参数)抽屉
+  const [sideOpen, setSideOpen] = useState(false);       // 手机模式:侧边栏展开/收起
 
   // 输入框「完全复用」游戏页 Composer 所需的状态(与 game-console.jsx 一致):
   const [gameState, setGameState] = useState(null);       // 完整 /api/state → 喂给 Composer(模型名/context 圆环/@mention)
@@ -199,6 +202,7 @@ export default function TavernPage() {
     applyTavernState(data, {
       setCharacter, setPersona, setHistory, setActiveChat,
       setGameState, setPermission,
+      setImmersive,
       mapHistory: mapHistoryWithToolOps,
     });
   }, [mapHistoryWithToolOps]);
@@ -212,6 +216,7 @@ export default function TavernPage() {
   const openChat = useCallback(async (chat) => {
     if (!chat || !chat.id) return;
     setView('chat');
+    setSideOpen(false);  // 手机模式:选中对话后收起侧栏
     if (runRef.current.sse) { try { runRef.current.sse.stop('switch'); } catch (_) {} runRef.current.sse = null; }
     setRunning(false); setHasError(false); setHistory([]);
     setActiveId(chat.id);
@@ -585,28 +590,34 @@ export default function TavernPage() {
     reader.readAsDataURL(f);
   };
   const removeAttachment = (i) => setAttachments((a) => a.filter((_, j) => j !== i));
-  const onRetry = useCallback(() => {
-    if (running) return;
-    let t2 = (lastPlayerText && lastPlayerText.trim()) || '';
-    if (!t2) {
-      for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i]?.role === 'user' && (history[i].content || '').trim()) { t2 = history[i].content.trim(); break; }
-      }
+  const onRetry = useCallback(async (messageIndex) => {
+    if (running) { window.__apiToast?.(t('tavern_page.toast.still_generating'), { kind: 'warn', duration: 2000 }); return; }
+    const h = Array.isArray(history) ? history : [];
+    // 从 messageIndex 往前找本轮玩家输入;未指定则从末尾找
+    let pIdx = Number.isFinite(Number(messageIndex)) ? Number(messageIndex) : h.length - 1;
+    pIdx = Math.min(pIdx, h.length - 1);
+    while (pIdx >= 0 && h[pIdx]?.role !== 'user') pIdx--;
+    if (pIdx < 0) { window.__apiToast?.(t('tavern_page.toast.no_retry_input'), { kind: 'warn', duration: 2000 }); return; }
+    const playerText = String(h[pIdx]?.content || '').trim();
+    if (!playerText) { window.__apiToast?.(t('tavern_page.toast.no_retry_input'), { kind: 'warn', duration: 2000 }); return; }
+    if (activeId == null) { window.__apiToast?.(t('tavern_page.toast.no_retry_input'), { kind: 'warn', duration: 2000 }); return; }
+    try {
+      setHasError(false);
+      const r = await window.api.branches.rollbackToMessage(activeId, pIdx);
+      if (r && r.ok === false) throw new Error(r.error || r.detail);
+      // 重新拉取 state(历史截到本轮之前)
+      const data = await window.api.game.state();
+      applyState(data);
+      window.__apiToast?.(t('tavern_page.toast.regenerating'), { kind: 'ok', duration: 1800 });
+      startRun(playerText);
+    } catch (e) {
+      window.__apiToast?.(t('tavern_page.toast.retry_failed'), { kind: 'danger', detail: e?.message, duration: 3000 });
     }
-    if (!t2) { window.__apiToast?.(t('tavern_page.toast.no_retry_input'), { kind: 'warn', duration: 2000 }); return; }
-    setHasError(false);
-    setHistory((h) => {
-      const out = [...h];
-      while (out.length && out[out.length - 1].role === 'assistant' && !(out[out.length - 1].content || '').trim()) out.pop();
-      if (out.length && out[out.length - 1].role === 'user' && (out[out.length - 1].content || '').trim() === t2) out.pop();
-      return out;
-    });
-    startRun(t2);
-  }, [running, lastPlayerText, history, startRun]);
+  }, [running, history, activeId, applyState, startRun, t]);
 
   // 监听 MsgActions 派发的 rpg-regenerate 事件(消息气泡「重新生成」按钮)
   useEffect(() => {
-    const handler = () => onRetry();
+    const handler = (e) => onRetry(e?.detail?.message_index);
     window.addEventListener('rpg-regenerate', handler);
     return () => window.removeEventListener('rpg-regenerate', handler);
   }, [onRetry]);
@@ -652,6 +663,41 @@ export default function TavernPage() {
       throw e;
     }
   }, [applyState]);
+
+  /* ── 沉浸式拟人模式开关 ── */
+  const onToggleImmersive = useCallback(async (enabled) => {
+    if (!activeId) return;
+    setImmersive(enabled); // 乐观更新
+    try {
+      await window.api.tavern.setImmersive(activeId, enabled);
+      window.__apiToast?.(
+        enabled ? t('tavern_app.drawer.immersive_on_toast') : t('tavern_app.drawer.immersive_off_toast'),
+        { kind: 'ok', duration: 1500 },
+      );
+    } catch (e) {
+      setImmersive(!enabled); // 回滚
+      window.__apiToast?.(t('tavern_page.toast.save_failed'), { kind: 'danger', detail: e?.message });
+    }
+  }, [activeId, t]);
+
+  /* ── AI 帮回:以玩家自己的角色生成一条回复 → 填入输入框(不自动发送)── */
+  const onAiReply = useCallback(async () => {
+    if (!activeId || aiReplyLoading) return;
+    setAiReplyLoading(true);
+    try {
+      const r = await window.api.tavern.aiReply(activeId);
+      const reply = (r && r.reply) || '';
+      if (!reply) {
+        window.__apiToast?.(t('tavern_app.ai_reply.empty'), { kind: 'warn', duration: 2000 });
+        return;
+      }
+      setText(reply);
+    } catch (e) {
+      window.__apiToast?.(t('tavern_app.ai_reply.fail'), { kind: 'danger', detail: e?.message });
+    } finally {
+      setAiReplyLoading(false);
+    }
+  }, [activeId, aiReplyLoading, t]);
 
   // F#3:系统提示词(本对话)= state.data.tavern.system_prompt;编辑经专用端点持久化后刷新。
   const systemPrompt = (gameState && (
@@ -728,8 +774,11 @@ export default function TavernPage() {
       {/* GameToastStack 已上移到 PlatformShellCS 统一挂载(TavernPage 始终嵌在其中),
           此处移除以避免 game 总线双订阅 → 重复 toast。 */}
 
+      {/* ── 手机侧栏遮罩 ──────────────────────────────────────────── */}
+      {sideOpen && <div className="tvp-side-scrim" onClick={() => setSideOpen(false)} />}
+
       {/* ── 左:两段式子侧栏 ──────────────────────────────────────── */}
-      <aside className="tvp-side">
+      <aside className={`tvp-side${sideOpen ? ' open' : ''}`}>
         {/* 上段(固定):新建 / 角色卡 / 快捷模型 */}
         <div className="tvp-side-top">
           <CSButton variant="primary" iconName="add-plus" onClick={newChat} fullWidth>
@@ -854,6 +903,9 @@ export default function TavernPage() {
         ) : (
           <>
             <header className="tvp-chat-head">
+              <button className="tvp-side-toggle iconbtn" onClick={() => setSideOpen(true)} data-tip={t('tavern_page.sidebar.toggle_tip')} aria-label={t('tavern_page.sidebar.toggle_tip')}>
+                <Icon name="menu" size={18} />
+              </button>
               <button className="tvp-chat-title" onClick={() => setDrawerOpen(true)} data-tip={t('tavern_page.header.char_persona_tip')}>
                 <span className="tvp-chat-name">{charName}</span>
                 <Icon name="chevron_down" size={12} style={{ opacity: 0.5 }} />
@@ -941,6 +993,8 @@ export default function TavernPage() {
                 togglePlus={() => { setShowPlus((s) => !s); setShowSlash(false); setShowModel(false); setShowPerm(false); }}
                 toggleModel={() => { setShowModel((s) => !s); setShowSlash(false); setShowPlus(false); setShowPerm(false); }}
                 togglePerm={() => { setShowPerm((s) => !s); setShowSlash(false); setShowPlus(false); setShowModel(false); }}
+                onAiReply={onAiReply}
+                aiReplyOnly
               />
               {/* 计时器/token/费用 不再浮在页脚:生成中显示在「正在思考」气泡,完成后并入最新消息操作栏。 */}
             </div>
@@ -962,7 +1016,11 @@ export default function TavernPage() {
         onClose={() => setDrawerOpen(false)}
         onSavePersona={onSavePersona}
         onSaveSystemPrompt={onSaveSystemPrompt}
+        immersive={immersive}
+        onToggleImmersive={onToggleImmersive}
       />
+      {/* 手机端右侧抽屉遮罩 */}
+      {drawerOpen && <div className="tvp-drawer-scrim" onClick={() => setDrawerOpen(false)} />}
 
       {/* 采样参数(模型参数)抽屉 —— 复用 settings 的 ModelParamsSection,写同一份偏好,影响所有调用 */}
       {paramsOpen && (
