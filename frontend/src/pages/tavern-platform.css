@@ -272,6 +272,17 @@
 }
 .tvp-hero-drop-sub { font-size: 12px; }
 
+/* 引导页:人格 skill 导入(GitHub 链接) */
+.tvp-hero-skill { width: 100%; margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.tvp-hero-skill-row { display: flex; gap: 8px; align-items: center; }
+.tvp-hero-skill-input {
+  flex: 1; min-width: 0; height: 38px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel-2, var(--panel)); color: var(--text); font-size: 13.5px;
+}
+.tvp-hero-skill-input:focus { outline: none; border-color: var(--accent); }
+.tvp-hero-skill-hint { font-size: 11.5px; text-align: center; }
+
 /* ── F1:后台工具流(可折叠、静音后台风)──────────────────────────── */
 .tvp-root .tvp-tools {
   max-width: 740px;

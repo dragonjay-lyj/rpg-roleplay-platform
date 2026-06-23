@@ -126,6 +126,9 @@ export default function TavernPage() {
   const titledRef = useRef(new Set());
 
   const [importOpen, setImportOpen] = useState(false);
+  const [skillRepoUrl, setSkillRepoUrl] = useState('');   // 引导页:人格 skill 的 GitHub 链接
+  const [skillBusy, setSkillBusy] = useState(false);
+  const heroFileRef = useRef(null);                        // 引导页统一文件选择(角色卡 / .md skill)
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -260,7 +263,7 @@ export default function TavernPage() {
       openChat(hit || { id: pendingSaveId, title: t('tavern_page.new_chat_title'), character_name: '' });
       return;
     }
-    if (chats.length > 0) { openChat(chats[0]); }
+    // 不再自动续上次对话(避免引导页「一闪而过」);稳定落在引导页,侧栏列出所有对话可点选续聊。
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingList, chats]);
 
@@ -341,6 +344,40 @@ export default function TavernPage() {
       window.__apiToast?.(t('tavern_page.toast.import_failed'), { kind: 'danger', detail: e?.message });
     }
   }, [openSaveId]);
+
+  // 人格 skill 导入(GitHub 链接 / .md)→ 蒸馏成角色卡(不自动生图);成功后切到「选择角色」让用户挑。
+  const importSkill = useCallback(async (body, label) => {
+    setSkillBusy(true);
+    try {
+      const r = await window.api.personaSkills.import(body);
+      if (!r || !r.ok) throw new Error((r && r.error) || t('tavern_page.toast.import_failed'));
+      const nm = (r.card && r.card.name) || label || t('tavern_page.char_fallback');
+      window.__apiToast?.(`已生成角色卡「${nm}」`, { kind: 'ok', duration: 2600 });
+      setSkillRepoUrl('');
+      setView('select');   // 去角色库挑这张新卡开聊
+    } catch (e) {
+      window.__apiToast?.(t('tavern_page.toast.import_failed'), { kind: 'danger', detail: e?.message });
+    } finally {
+      setSkillBusy(false);
+    }
+  }, [t]);
+
+  const importSkillGithub = useCallback(() => {
+    const url = skillRepoUrl.trim();
+    if (!url) return;
+    importSkill({ source: 'github', repo_url: url }, url);
+  }, [skillRepoUrl, importSkill]);
+
+  // 引导页统一拖入/选择:.md → 人格 skill;.png/.json/.webp → SillyTavern 角色卡。
+  const onHeroFile = useCallback(async (file) => {
+    if (!file) return;
+    if (/\.md$/i.test(file.name || '')) {
+      const content = await file.text();
+      importSkill({ source: 'upload', files: [{ name: file.name, content }] }, file.name.replace(/\.md$/i, ''));
+    } else {
+      onDropCard(file);
+    }
+  }, [importSkill, onDropCard]);
 
   /* ── 流式发送(收口到 useTavernChatRun;折叠语义见 lib/tavern-chat-run.js)──────── */
   // 秒表是 pages 独有 → 包一层:共用停流逻辑(hookStopRun)+ 本端停秒表。
@@ -877,27 +914,54 @@ export default function TavernPage() {
               <UserCardsView />
             </div>
           </div>
+        ) : loadingList && activeId == null ? (
+          <div className="tvp-hero"><div className="tvp-hero-inner"><div className="tvp-hero-mark" aria-hidden="true">✻</div></div></div>
         ) : activeId == null ? (
           <div className="tvp-hero">
             <div className="tvp-hero-inner">
               <div className="tvp-hero-mark" aria-hidden="true">✻</div>
               <h1 className="tvp-hero-title serif">{t('tavern_page.hero.heading')}</h1>
-              <p className="tvp-hero-sub muted">{t('tavern_page.hero.sub')}</p>
+              <p className="tvp-hero-sub muted">新建一段对话、从角色卡里挑一位,或导入一个人格 skill。</p>
               <div className="tvp-hero-actions">
                 <CSButton variant="primary" iconName="add-plus" onClick={newChat}>{t('tavern_page.sidebar.new_chat')}</CSButton>
                 <CSButton iconName="user-profile" onClick={() => setView('select')}>{t('tavern_page.sidebar.select_char')}</CSButton>
               </div>
+
+              {/* 导入人格 skill —— GitHub 链接(cyrene.skill 这类纯 markdown 角色档)→ 蒸馏成角色卡 */}
+              <div className="tvp-hero-skill">
+                <div className="tvp-hero-skill-row">
+                  <input
+                    type="url" inputMode="url"
+                    className="tvp-hero-skill-input"
+                    placeholder="GitHub 链接,如 https://github.com/owner/repo"
+                    value={skillRepoUrl}
+                    onChange={(e) => setSkillRepoUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') importSkillGithub(); }}
+                    disabled={skillBusy}
+                  />
+                  <CSButton onClick={importSkillGithub} disabled={skillBusy || !skillRepoUrl.trim()}>
+                    {skillBusy ? '导入中…' : '导入 skill'}
+                  </CSButton>
+                </div>
+                <div className="tvp-hero-skill-hint muted-2">导入人格 skill(角色扮演 skill.md / GitHub 仓库),自动生成角色卡</div>
+              </div>
+
+              {/* 统一拖入/选择:.md=人格 skill,.png/.json/.webp=SillyTavern 角色卡 */}
               <div
                 className="tvp-hero-drop"
                 onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('tvp-drop'); }}
                 onDragLeave={(e) => e.currentTarget.classList.remove('tvp-drop')}
-                onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('tvp-drop'); const f = e.dataTransfer?.files?.[0]; if (f) onDropCard(f); }}
-                onClick={newChat}
+                onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('tvp-drop'); const f = e.dataTransfer?.files?.[0]; if (f) onHeroFile(f); }}
+                onClick={() => heroFileRef.current?.click()}
                 role="button" tabIndex={0}
               >
                 <Icon name="upload" size={22} style={{ color: 'var(--accent)' }} />
-                <div className="tvp-hero-drop-sub muted-2">{t('tavern_page.hero.drop_hint')}</div>
+                <div className="tvp-hero-drop-sub muted-2">拖入文件 / 点击选择 —— 角色卡 .png / .json / .webp · 人格 skill .md</div>
               </div>
+              <input
+                ref={heroFileRef} type="file" accept=".png,.json,.webp,.md" style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) onHeroFile(f); e.target.value = ''; }}
+              />
             </div>
           </div>
         ) : (
