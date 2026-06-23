@@ -28,7 +28,8 @@ def resolve_steering_target(db, *, save_id: int, script_id: int,
     """
     worldlines = canon_repo.read_worldlines(db, script_id)
     if not worldlines:
-        return _fallback_soft_goal(save_id, wl_key=None, steering_strength=steering_strength)
+        return _fallback_soft_goal(save_id, wl_key=None, steering_strength=steering_strength,
+                                   progress_chapter=progress_chapter)
     # 默认主线(is_primary),否则第一条
     wl = next((w for w in worldlines if w.get("is_primary")), worldlines[0])
     nodes = canon_repo.read_worldline_nodes(db, script_id, wl["wl_key"], progress_chapter=progress_chapter)
@@ -36,7 +37,8 @@ def resolve_steering_target(db, *, save_id: int, script_id: int,
         # 粗弧层 script_worldline_nodes 没建(很多剧本只 seed 了细 save_anchor_states,
         # 没跑世界树脊柱)→ 旧代码静默返回空 soft_goal,GM 完全无引导、玩家「锚点推不动」。
         # 降级:用细锚点层的 top-1~2 pending 合成 soft_goal,受 steering_strength 控制。
-        return _fallback_soft_goal(save_id, wl_key=wl["wl_key"], steering_strength=steering_strength)
+        return _fallback_soft_goal(save_id, wl_key=wl["wl_key"], steering_strength=steering_strength,
+                                   progress_chapter=progress_chapter)
 
     # 已 occurred 的锚点 keys
     occurred = {
@@ -120,34 +122,51 @@ def _rail_directive(*, target: str, must_str: str = "", after: str = "") -> str:
 
 
 def _fallback_soft_goal(save_id: int, *, wl_key: str | None,
-                        steering_strength: str = "guided") -> dict:
-    """粗弧层(script_worldline_nodes)缺失时的确定性降级:用细锚点层的 top-1~2 pending
+                        steering_strength: str = "guided",
+                        progress_chapter: int | None = None) -> dict:
+    """粗弧层(script_worldline_nodes)缺失时的确定性降级:用细锚点层的【最近的待发生】
     锚点合成 soft_goal,别让 GM 完全失去引导(用户「锚点推不动」根因之一)。本书
     script_worldline_nodes 多半为空,steering 实际就走这条路径。
 
     强度梯度必须保留:
       free   — 仍不注入(尊重玩家选择)。
-      guided — top-1 待发生锚点,温和软目标。
-      rail   — **强力**版(非 gentle):top-1 当「下一拍」+ top-2 提示后续,强措辞收束。
+      guided — 最近 1 个待发生锚点,温和软目标。
+      rail   — **强力**版(非 gentle):最近 1 个当「下一拍」+ 次近 1 个提示后续,强措辞收束。
+
+    根因修复(用户「开局强制下一拍指向多章以后的人物」反复反馈):
+      「下一拍」本质是【最近的下一个】锚点,必须按 source_chapter ASC 取(order_by_chapter),
+      绝不能按 importance DESC —— 否则开局会取到窗口/全档里最重要的远章人物(如几十章后登场
+      的主要角色)当下一拍。同时锚定到玩家当前章(progress_chapter),开局窗口不再是死的
+      [1,30]、也绝不取玩家身后的锚点。与 retrieval.py 进度窗口注入(已修)保持同一语义。
     """
     base = {"worldline": wl_key, "passed_nodes": 0, "next_node": None,
             "soft_goal": "", "pending_anchors": [], "strength": steering_strength}
     if steering_strength == "free":
         return base
-    # rail 多带一条(top-2)给「下一拍 + 其后」;guided 仍只取 top-1。
+    # rail 多带一条(次近)给「下一拍 + 其后」;guided 仍只取最近 1 个。
     want = 2 if steering_strength == "rail" else 1
     try:
-        from agents.anchor_seed_agent import list_pending_for_phase
-        # 限当前进度窗口内,按 importance desc 取首个(防剧透 + 取最该推进的)。
-        from agents.anchor_seed_agent import get_progress_window
+        from agents.anchor_seed_agent import list_pending_for_phase, get_progress_window
         win = get_progress_window(int(save_id))
+        ch_min = win.get("chapter_min")
+        ch_max = win.get("chapter_max")
+        # 锚定到玩家当前章:防开局(无 occurred 锚点)窗口回退成 [1,30] 后,
+        # 仍把「下一拍」指到玩家身后或窗口内远章。progress_chapter 是权威当前章。
+        if progress_chapter and int(progress_chapter) > 0:
+            ch_min = max(int(ch_min or 1), int(progress_chapter))
+            ch_max = max(int(ch_max or 0), ch_min + 50)
+        # 「下一拍」= 当前章及以后【最近】的待发生锚点(chapter ASC),不是全局最重要的。
         pend = list_pending_for_phase(
             int(save_id), None, limit=want,
-            chapter_min=win.get("chapter_min"), chapter_max=win.get("chapter_max"),
+            chapter_min=ch_min, chapter_max=ch_max, order_by_chapter=True,
         )
         if not pend:
-            # 窗口内没有 → 放宽到全档 top-N pending(仍只读不写)。
-            pend = list_pending_for_phase(int(save_id), None, limit=want)
+            # 窗口内没有 → 放宽 chapter_max,取当前章及以后最近的(仍 chapter ASC,
+            # 绝不退回「全档按 importance」—— 那正是开局指向远章人物的旧 bug)。
+            pend = list_pending_for_phase(
+                int(save_id), None, limit=want,
+                chapter_min=ch_min, order_by_chapter=True,
+            )
     except Exception:
         pend = []
     if not pend:
