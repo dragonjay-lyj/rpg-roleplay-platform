@@ -33,7 +33,9 @@ import {
 import Modal from './components/Modal.jsx';
 import ConfirmDialog from './components/ConfirmDialog.jsx';
 import PolicyNoticeBanner from './components/PolicyNoticeBanner.jsx';
-import { FeedbackQuickModal } from './components/FeedbackQuickModal.jsx';
+// #2 合并:平台顶栏「反馈」改用功能更全的 FeedbackDrawer(原 QuickModal 是其功能子集 —— 缺历史/
+// 回执/管理员回复/对话节选/自部署邮箱/i18n;退役 QuickModal,零功能丢失,platform 反馈反而更全)。
+import { FeedbackDrawer } from './components/FeedbackDrawer.jsx';
 import HelpDrawerRoot from './components/HelpDrawer.jsx';
 import AvatarImg from './components/AvatarImg.jsx';
 import GenerateImageModal from './components/GenerateImageModal.jsx';
@@ -4489,7 +4491,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   return (
     <>
       <PolicyNoticeBanner />
-      <FeedbackQuickModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      <FeedbackDrawer open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <WelcomeModal open={welcomeOpen} firstTime={welcomeFirstTime}
         onClose={() => { markAnnouncementSeen(); setWelcomeOpen(false); setWelcomeFirstTime(false); }} />
       <HelpDrawerRoot />
