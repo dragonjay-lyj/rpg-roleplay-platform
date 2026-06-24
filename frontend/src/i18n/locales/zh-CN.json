@@ -3521,7 +3521,9 @@
         "still_running": "上一轮还在运行，请等待完成",
         "no_input": "没有可重试的输入",
         "retrying": "正在重试上一轮",
-        "still_generating": "正在生成中，请等待"
+        "still_generating": "正在生成中，请等待",
+        "generate_with": "用 {{model}} 生成",
+        "continue": "继续"
       },
       "regen": {
         "no_player_input": "没有玩家输入可重新生成",

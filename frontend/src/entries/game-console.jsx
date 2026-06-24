@@ -1470,12 +1470,12 @@ function App() {
       } catch (e) { window.__apiToast?.(t('game.console.config.save_pref_failed'), { kind: 'danger', detail: e?.message }); }
     }
     await _clearConfigQuestion(handleId);
-    startRun(`用 ${model || cap.label} 生成`);
+    startRun(t('game.console.retry.generate_with', { model: model || cap.label }));
   };
   // mode "missing_key":用户在卡片里配好后点「继续」→ 清掉卡片 → startRun("继续") 重试。
   const onConfigContinue = async (handleId, item, label) => {
     await _clearConfigQuestion(handleId);
-    startRun(label || '继续');
+    startRun(label || t('game.console.retry.continue'));
   };
   const onConfigSettings = () => { try { window.location.hash = 'settings-models'; } catch (_) {} };
   // mode "model_not_configured"(hard):打开阻塞弹窗。
@@ -1486,7 +1486,7 @@ function App() {
     const item = hardConfigItem; if (!item) return;
     setHardConfigItem(null);
     await _clearConfigQuestion(_hardHandleId(item));
-    startRun(`用 ${chosenModel || item.model || ''} 生成`);
+    startRun(t('game.console.retry.generate_with', { model: chosenModel || item.model || '' }));
   };
   const onHardCancel = async () => {
     const item = hardConfigItem; if (!item) { setHardConfigItem(null); return; }

@@ -95,6 +95,9 @@
 /* 右栏折叠(宽屏:从网格抽走右栏 + 分隔条) */
 .mde-panes.right-collapsed { grid-template-columns: var(--mde-left-w, 240px) 5px minmax(0, 1fr) 0 0; }
 .mde-panes.right-collapsed > .mde-right, .mde-panes.right-collapsed > .mde-splitter-right { display: none; }
+/* 右栏浮层遮罩:默认隐藏(宽屏右栏是网格列不需遮罩);窄屏 @media(<1100px)内改 display:block。
+   必须定义在该 @media 之前 —— 否则同特异性下后置规则会反盖掉 @media 的 block。 */
+.mde-scrim { display: none; }
 
 /* 文件树 */
 .mde-tree { display: flex; flex-direction: column; height: 100%; }
@@ -241,6 +244,9 @@
     border-left: 1px solid var(--line, #36322d);
     overflow-x: hidden; overflow-y: auto;
   }
+  /* 右栏浮层背景遮罩(点击/触摸关闭) —— z-index 59 在浮层(60)下、内容上。
+     注:默认 .mde-scrim{display:none} 定义在本 @media 之前,故此处 display:block 在窄屏正确覆盖。 */
+  .mde-scrim { display: block; position: fixed; top: 42px; left: 0; right: 0; bottom: 0; z-index: 59; background: rgba(0,0,0,.45); }
 }
 
 /* ── VSCode 风资源管理器(P8:多组/搜索/图标/工具栏/键盘/右键/增删改/拖拽)── */

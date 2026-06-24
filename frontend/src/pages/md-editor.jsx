@@ -897,6 +897,8 @@ export default function MdEditorPage() {
         <button className={'mde-tb-ic' + (rightOpen ? ' on' : '')} data-tip={rightOpen ? t('md_editor.panel.hide_ai') : t('md_editor.panel.show_ai')} title={rightOpen ? t('md_editor.panel.hide_ai') : t('md_editor.panel.show_ai')} onClick={toggleRight}><TbIcon name="panelRight" /></button>
       </div>
 
+      {/* 窄屏右栏浮层的背景遮罩:点击/触摸关闭(CSS 只在 <1100px 显示;宽屏右栏是网格列不显示)。 */}
+      {rightOpen && <div className="mde-scrim" onClick={toggleRight} aria-hidden="true" />}
       <div className={'mde-panes' + (rightOpen ? '' : ' right-collapsed')} ref={panesRef} style={{ '--mde-left-w': leftW + 'px', '--mde-right-w': rightW + 'px' }}>
         {/* 左:文件树 */}
         <aside className="mde-left">

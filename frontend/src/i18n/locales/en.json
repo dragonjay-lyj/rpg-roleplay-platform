@@ -3430,7 +3430,9 @@
         "still_running": "The previous turn is still running — please wait",
         "no_input": "No input to retry",
         "retrying": "Retrying last turn",
-        "still_generating": "Still generating — please wait"
+        "still_generating": "Still generating — please wait",
+        "generate_with": "Generate with {{model}}",
+        "continue": "Continue"
       },
       "regen": {
         "no_player_input": "No player input available to regenerate",
