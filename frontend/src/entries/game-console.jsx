@@ -20,6 +20,9 @@ import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { lsGet, lsSet, lsRemove } from '../lib/storage.js';
 
+// 客户端动作命令:本地执行、不发给 GM(区别于 /set /loc /time 等后端 directive,后者仍作为文本发送)。
+const CLIENT_CMDS = new Set(['retry', 'save', 'status', 'debug']);
+
 // 反馈抽屉使用 Cloudscape 组件；游戏页也必须加载同一套暗色主题。
 import '@cloudscape-design/global-styles/index.css';
 import { installWarmTheme } from '../cloudscape-theme.js';
@@ -1296,6 +1299,25 @@ function App() {
     // 选了斜杠命令但没填文字时,也允许直接发送(发命令 trigger)。来自 PR #14。
     if (!text.trim() && !attachments.length && !pickedCommand) return;
     if (runState.running) return;
+    // 客户端动作命令(/retry /save /status /debug)= 本地执行,不发给 GM。
+    // 此前 onSend 一律 startRun → "/retry" 被当玩家文本发给 GM,retry 从不执行(用户反馈)。
+    // /set /loc /time /rel /var /pin /note /memory /permission 是后端 directive,仍走 startRun 发送。
+    const typed = text.trim().toLowerCase();
+    const typedId = (typed.startsWith('/') && CLIENT_CMDS.has(typed.slice(1))) ? typed.slice(1) : '';
+    const cmdId = (pickedCommand && CLIENT_CMDS.has(pickedCommand.id)) ? pickedCommand.id : typedId;
+    if (cmdId) {
+      setText(''); setPickedCommand(null); setShowSlash(false);
+      if (cmdId === 'retry') onRetry();
+      else if (cmdId === 'status') setPanelCollapsed(false);
+      else if (cmdId === 'debug') setSseLogOpen(true);
+      else if (cmdId === 'save') {
+        (async () => {
+          try { await window.api.game.saveGame(); window.__apiToast?.(t('common.save') + ' ✓', { kind: 'ok' }); }
+          catch (e) { window.__apiToast?.(t('game.console.save.save_failed'), { kind: 'danger', detail: e?.message }); }
+        })();
+      }
+      return;
+    }
     setHasError(false);
     startRun(text.trim() || (pickedCommand ? pickedCommand.trigger.trim() : t('game.console.send.attachment_only')));
   };
