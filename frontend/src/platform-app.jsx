@@ -4,6 +4,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { useState as useStatePL, useEffect as useEffectPL, useMemo as useMemoPL, useCallback as useCallbackPL } from 'react';
 import { useTranslation } from 'react-i18next';
+import i18n from './i18n/index.js';
 import { Icon } from './game-icons.jsx';
 import { useResizable, ResizeHandle } from './responsive.jsx';
 import { plNavigate } from './router.js';
@@ -557,6 +558,10 @@ function useAutoSave(label, scope) {
   //     /api/me/preference（后端做 patch merge，不会冲掉其他 key）
   //   - val 为 undefined → 退化为旧行为，只 toast 不写后端（兼容老调用站点）
   //   - 失败 toast danger，不再假装"已保存"
+  // NOTE: t() cannot be used in this non-component hook (no React render context).
+  // useAutoSave 非 React 组件,无 useTranslation hook → 直接用导入的 i18n 实例(已初始化)。
+  // 原 window.__t 从未被赋值(agent 误造的全局),导致永远回退中文 fb;改用 i18n.t,英文模式正确。
+  const _t = (key, fb) => { try { const v = i18n.t(key); return (v && v !== key) ? v : fb; } catch (_) { return fb; } };
   const timerRef = React.useRef(null);
   const pendingRef = React.useRef({});
   // 卸载时清理 pending debounce timer，避免在已卸载组件上触发 setState
@@ -572,14 +577,14 @@ function useAutoSave(label, scope) {
       pendingRef.current = {};
       if (Object.keys(batch).length === 0) {
         // 兼容旧调用：仅 toast，不打后端
-        window.toast?.(`${label}已保存`, { kind: "ok", detail: scope ? `${scope} · ${field}` : field, duration: 2400 });
+        window.toast?.(`${label}${_t('platform.autosave.saved', '已保存')}`, { kind: "ok", detail: scope ? `${scope} · ${field}` : field, duration: 2400 });
         return;
       }
       try {
         await window.api.account.preferences(batch);
-        window.toast?.(`${label}已保存`, { kind: "ok", detail: Object.keys(batch).join(', '), duration: 2000 });
+        window.toast?.(`${label}${_t('platform.autosave.saved', '已保存')}`, { kind: "ok", detail: Object.keys(batch).join(', '), duration: 2000 });
       } catch (e) {
-        window.toast?.(`${label}保存失败`, { kind: "danger", detail: e?.message || "网络错误", duration: 3000 });
+        window.toast?.(`${label}${_t('platform.autosave.failed', '保存失败')}`, { kind: "danger", detail: e?.message || _t('platform.autosave.network_error', '网络错误'), duration: 3000 });
       }
     }, 250);
   }, [label, scope]);
@@ -749,14 +754,14 @@ function UnifiedSearch({ open, onClose, setPage }) {
 
   const scripts = (platform.scripts || []).map(s => ({
     id: "scr-" + s.id, label: s.title, kind: "script",
-    sub: `${Number(s.chapter_count || 0).toLocaleString()} 章 · ${((s.word_count || 0) / 10000).toFixed(1)}万字`,
+    sub: `${Number(s.chapter_count || 0).toLocaleString()} ${tSearch('platform.search.unit_chapters', '章')} · ${((s.word_count || 0) / 10000).toFixed(1)}${tSearch('platform.search.unit_wan_chars', '万字')}`,
     icon: "book", keywords: s.uid + " " + s.description,
     hash: "scripts",
   }));
 
   const saves = (platform.saves || []).map(s => ({
     id: "sv-" + s.id, label: s.title, kind: "save",
-    sub: `${s.branch_count} 节点 · ${s.updated_at}`,
+    sub: `${s.branch_count} ${tSearch('platform.search.unit_nodes', '节点')} · ${s.updated_at}`,
     icon: "play", keywords: s.uid,
     hash: "saves",
   }));
@@ -813,7 +818,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
 
   const apis = _modelSrc.map(a => ({
     id: "api-" + a.id, label: a.name, kind: "api",
-    sub: `${(a.models || []).length} 模型${a.base_url ? ' · ' + a.base_url : ''}`,
+    sub: `${(a.models || []).length} ${tSearch('platform.search.unit_models', '模型')}${a.base_url ? ' · ' + a.base_url : ''}`,
     icon: "braces", keywords: a.id,
     hash: "settings",
   }));
@@ -914,7 +919,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
           )}
           {q && flatList.length === 0 && (
             <div className="pl-model-empty" style={{margin: 16}}>
-              未匹配「{q}」 · 试试 GPT、雾港、记忆、claude、API
+              {tSearch('platform.search.no_results', { q, defaultValue: `未匹配「${q}」 · 试试 GPT、雾港、记忆、claude、API` })}
             </div>
           )}
           {q && order.map(kind => {
@@ -949,9 +954,9 @@ function UnifiedSearch({ open, onClose, setPage }) {
         </div>
         <footer className="pl-search-foot">
           <div className="pl-search-kbds">
-            <span><span className="kbd">↑↓</span> 选择</span>
-            <span><span className="kbd">⏎</span> 打开</span>
-            <span><span className="kbd">Esc</span> 关闭</span>
+            <span><span className="kbd">↑↓</span> {tSearch('platform.search.kbd_select', '选择')}</span>
+            <span><span className="kbd">⏎</span> {tSearch('platform.search.kbd_open', '打开')}</span>
+            <span><span className="kbd">Esc</span> {tSearch('platform.search.kbd_close', '关闭')}</span>
           </div>
           <span className="muted-2" style={{fontSize: 11}}>
             GET /api/v1/search?q={encodeURIComponent(q) || "..."} · 全文 · 模糊
@@ -1012,6 +1017,7 @@ function fmtAchvDate(iso) {
 }
 
 function AchievementWall({ items }) {
+  const { t } = useTranslation();
   const groups = (() => {
     const m = new Map();
     (items || []).forEach(a => { if (!m.has(a.category)) m.set(a.category, []); m.get(a.category).push(a); });
@@ -1035,8 +1041,8 @@ function AchievementWall({ items }) {
                   <span className="pl-achv-desc muted">{a.desc}</span>
                   {a.unlocked ? (
                     <span className="muted-2 mono" style={{fontSize: 10.5}}>
-                      {a.unlocked_at ? `解锁于 ${fmtAchvDate(a.unlocked_at)}` : "✓ 已达成"}
-                      {a.rarity != null && ` · ${a.rarity}% 玩家解锁`}
+                      {a.unlocked_at ? t('platform.achv.unlocked_at', { date: fmtAchvDate(a.unlocked_at), defaultValue: `解锁于 ${fmtAchvDate(a.unlocked_at)}` }) : t('platform.achv.achieved', '✓ 已达成')}
+                      {a.rarity != null && t('platform.achv.rarity', { pct: a.rarity, defaultValue: ` · ${a.rarity}% 玩家解锁` })}
                     </span>
                   ) : (
                     <div className="pl-achv-progress">
@@ -1057,21 +1063,22 @@ function AchievementWall({ items }) {
 }
 
 function AchvShareModal({ user, items, unlockedCount, total, onClose }) {
+  const { t } = useTranslation();
   const username = (user && user.username) || "";
   const wallUrl = `${location.origin}/wall?u=${encodeURIComponent(username)}`;
   const top = (items || []).filter(a => a.unlocked)
     .sort((a, b) => (TIER_RANK[b.tier] || 0) - (TIER_RANK[a.tier] || 0))
     .slice(0, 6);
   const copy = async () => {
-    try { await navigator.clipboard.writeText(wallUrl); window.toast("链接已复制", { kind: "ok" }); }
-    catch (_) { window.toast("复制失败，请手动复制", { kind: "warn" }); }
+    try { await navigator.clipboard.writeText(wallUrl); window.toast(t('platform.achv.link_copied', '链接已复制'), { kind: "ok" }); }
+    catch (_) { window.toast(t('platform.achv.copy_failed', '复制失败，请手动复制'), { kind: "warn" }); }
   };
   return (
-    <CSModal visible onDismiss={onClose} header="分享成就"
+    <CSModal visible onDismiss={onClose} header={t('platform.achv.share_title', '分享成就')}
       footer={<CSBox float="right"><CSSpaceBetween direction="horizontal" size="xs">
-        <CSButton variant="link" onClick={onClose}>关闭</CSButton>
-        <CSButton onClick={() => { onClose(); plNavigate('wall', { search: '?u=' + encodeURIComponent(username) }); }}>查看我的公开墙</CSButton>
-        <CSButton variant="primary" iconName="copy" onClick={copy}>复制链接</CSButton>
+        <CSButton variant="link" onClick={onClose}>{t('common.close')}</CSButton>
+        <CSButton onClick={() => { onClose(); plNavigate('wall', { search: '?u=' + encodeURIComponent(username) }); }}>{t('platform.achv.view_wall', '查看我的公开墙')}</CSButton>
+        <CSButton variant="primary" iconName="copy" onClick={copy}>{t('platform.achv.copy_link', '复制链接')}</CSButton>
       </CSSpaceBetween></CSBox>}>
       <CSSpaceBetween size="m">
         <div className="pl-achv-share-card">
@@ -1079,7 +1086,7 @@ function AchvShareModal({ user, items, unlockedCount, total, onClose }) {
             <AvatarImg src={user._raw?.avatar_url || null} name={user.display_name || '?'} size={40} shape="circle" className="pl-achv-share-avatar" />
             <div>
               <strong>{user.display_name}</strong>
-              <div className="muted-2" style={{ fontSize: 12 }}>解锁 {unlockedCount} / {total} 成就</div>
+              <div className="muted-2" style={{ fontSize: 12 }}>{t('platform.achv.unlocked_count', { unlocked: unlockedCount, total, defaultValue: `解锁 ${unlockedCount} / ${total} 成就` })}</div>
             </div>
           </div>
           <div className="pl-achv-share-grid">
@@ -1092,7 +1099,7 @@ function AchvShareModal({ user, items, unlockedCount, total, onClose }) {
           </div>
         </div>
         <CSBox color="text-body-secondary" fontSize="body-s">
-          公开成就墙链接(需在「设置 → 隐私」开启「公开个人主页」后，他人方可访问):
+          {t('platform.achv.wall_link_hint', '公开成就墙链接(需在「设置 → 隐私」开启「公开个人主页」后，他人方可访问):')}
           <div className="mono" style={{ marginTop: 4, wordBreak: "break-all", fontSize: 12 }}>{wallUrl}</div>
         </CSBox>
       </CSSpaceBetween>
@@ -1101,25 +1108,26 @@ function AchvShareModal({ user, items, unlockedCount, total, onClose }) {
 }
 
 export function PublicAchievementsPage() {
+  const { t } = useTranslation();
   const [data, setData] = useStatePL(null);
   const [err, setErr] = useStatePL(null);
   const username = (() => { try { return new URLSearchParams(location.search).get("u") || ""; } catch { return ""; } })();
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
-      if (!username) { setErr("缺少用户名"); return; }
+      if (!username) { setErr(t('platform.achv.missing_username', '缺少用户名')); return; }
       try { const r = await window.api.account.publicWall(username); if (!cancelled) setData(r); }
-      catch (e) { if (!cancelled) setErr((e && e.message) || "加载失败"); }
+      catch (e) { if (!cancelled) setErr((e && e.message) || t('platform.achv.load_failed', '加载失败')); }
     })();
     return () => { cancelled = true; };
   }, [username]);
   if (err) {
     const notFound = err === "not found" || /404|not found/i.test(err);
     return <CSContainer><CSBox textAlign="center" color="text-body-secondary" padding="xxl">
-      {notFound ? "该用户未公开成就墙，或不存在。" : err}
+      {notFound ? t('platform.achv.wall_not_found', '该用户未公开成就墙，或不存在。') : err}
     </CSBox></CSContainer>;
   }
-  if (!data) return <CSContainer><CSBox textAlign="center" padding="xxl">加载中…</CSBox></CSContainer>;
+  if (!data) return <CSContainer><CSBox textAlign="center" padding="xxl">{t('common.loading', '加载中…')}</CSBox></CSContainer>;
   const items = data.items || [];
   return (
     <CSSpaceBetween size="l">
@@ -1128,11 +1136,11 @@ export function PublicAchievementsPage() {
           <AvatarImg src={data.avatar_url || null} name={data.display_name || data.username || '?'} size={56} shape="circle" className="pl-achv-share-avatar lg" />
           <div>
             <CSBox variant="h2">{data.display_name || data.username}</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">@{data.username} · 解锁 {data.unlocked_count} / {data.total} 成就</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">@{data.username} · {t('platform.achv.unlocked_count', { unlocked: data.unlocked_count, total: data.total, defaultValue: `解锁 ${data.unlocked_count} / ${data.total} 成就` })}</CSBox>
           </div>
         </CSSpaceBetween>
       </CSContainer>
-      <CSContainer header={<CSHeader variant="h2">成就墙</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.achv.wall_heading', '成就墙')}</CSHeader>}>
         <AchievementWall items={items} />
       </CSContainer>
     </CSSpaceBetween>
@@ -1141,6 +1149,7 @@ export function PublicAchievementsPage() {
 
 
 function MeOverview() {
+  const { t } = useTranslation();
   const { stats: platStats = {}, saves = [] } = usePlatformData();  // task 45：响应式 platform
   const user = useReactiveUser();  // task 13: MePage 切换 / 保存后即时更新
   const [filter, setFilter] = useStatePL("all");
@@ -1257,7 +1266,7 @@ function MeOverview() {
               {!IS_ANON && (
                 <button
                   onClick={() => setOverviewAvatarStudioOpen(true)}
-                  title="更换头像"
+                  title={t('platform.me.change_avatar', '更换头像')}
                   style={{
                     position: 'absolute', bottom: 0, right: 0,
                     background: 'var(--color-background-dropdown-item-default, #2a2927)',
@@ -1274,15 +1283,15 @@ function MeOverview() {
               <CSSpaceBetween size="xs">
                 <CSBox variant="h2">
                   {user.display_name}
-                  <span className="pill" style={{marginLeft: 8}}><span className="dot ok pulse" /> 在线</span>
-                  <span className="pill accent" style={{marginLeft: 6}}>{user.role === "admin" ? "管理员" : user.role}</span>
+                  <span className="pill" style={{marginLeft: 8}}><span className="dot ok pulse" /> {t('platform.me.online', '在线')}</span>
+                  <span className="pill accent" style={{marginLeft: 6}}>{user.role === "admin" ? t('platform.me.role_admin', '管理员') : user.role}</span>
                 </CSBox>
                 <CSBox color="text-body-secondary" fontSize="body-s">
                   <span><Icon name="user" size={11} /> @{user.username}</span>
                   <span className="mono" style={{marginLeft: 12}}>uid {user.uid}</span>
-                  <span style={{marginLeft: 12}}><Icon name="history" size={11} /> 注册于 {regAt} · 上次登录 {lastLoginAgo}</span>
+                  <span style={{marginLeft: 12}}><Icon name="history" size={11} /> {t('platform.me.registered_at', { date: regAt, defaultValue: `注册于 ${regAt}` })} · {t('platform.me.last_login', { ago: lastLoginAgo, defaultValue: `上次登录 ${lastLoginAgo}` })}</span>
                 </CSBox>
-                <CSBox>{user.bio || "暂无简介。"}</CSBox>
+                <CSBox>{user.bio || t('platform.me.no_bio', '暂无简介。')}</CSBox>
               </CSSpaceBetween>
             </div>
           </CSSpaceBetween>
@@ -1293,44 +1302,44 @@ function MeOverview() {
       <CSContainer>
         <CSColumnLayout columns={5} variant="text-grid">
           <div>
-            <CSBox variant="awsui-key-label">游玩时长</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.me.stat_playtime', '游玩时长')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">
               {playHoursLabel}{playMinutesTotal != null && <span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>h</span>}
             </CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">{playMinutesWeek != null ? `本周 +${(playMinutesWeek / 60).toFixed(1)}h` : "暂无统计"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{playMinutesWeek != null ? t('platform.me.stat_playtime_week', { h: (playMinutesWeek / 60).toFixed(1), defaultValue: `本周 +${(playMinutesWeek / 60).toFixed(1)}h` }) : t('platform.me.stat_no_data', '暂无统计')}</CSBox>
           </div>
           <div>
-            <CSBox variant="awsui-key-label">回合数</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.me.stat_rounds', '回合数')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">{totalRounds != null ? totalRounds.toLocaleString() : "—"}</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">分布在 {saves.length} 个存档</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{t('platform.me.stat_saves_count', { n: saves.length, defaultValue: `分布在 ${saves.length} 个存档` })}</CSBox>
           </div>
           <div>
-            <CSBox variant="awsui-key-label">创建分支</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.me.stat_branches', '创建分支')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">{branchesCount != null ? branchesCount : "—"}</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">{maxDepth ? `最深 ${maxDepth} 层` : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{maxDepth ? t('platform.me.stat_max_depth', { n: maxDepth, defaultValue: `最深 ${maxDepth} 层` }) : "—"}</CSBox>
           </div>
           <div>
-            <CSBox variant="awsui-key-label">导入剧本</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.me.stat_scripts', '导入剧本')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">{importedScripts != null ? importedScripts : "—"}</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">{importedWords ? `共 ${fmtCN(importedWords)}字` : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{importedWords ? t('platform.me.stat_words', { n: fmtCN(importedWords), defaultValue: `共 ${fmtCN(importedWords)}字` }) : "—"}</CSBox>
           </div>
           <div>
-            <CSBox variant="awsui-key-label">连续登录</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.me.stat_streak', '连续登录')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">
-              {loginStreak != null ? loginStreak : "—"}<span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>天</span>
+              {loginStreak != null ? loginStreak : "—"}<span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>{t('platform.me.stat_streak_unit', '天')}</span>
             </CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">{longestStreak ? `最长 ${longestStreak} 天` : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{longestStreak ? t('platform.me.stat_streak_longest', { n: longestStreak, defaultValue: `最长 ${longestStreak} 天` }) : "—"}</CSBox>
           </div>
         </CSColumnLayout>
       </CSContainer>
 
       {/* 成就(服务端权威,按类目分组) */}
       <CSContainer header={<CSHeader variant="h2"
-        actions={!IS_ANON && unlockedCount > 0 && <CSButton iconName="share" onClick={() => setShareOpen(true)}>分享成就</CSButton>}
-      >成就 <span className="muted-2">{unlockedCount} / {ACHIEVEMENTS.length} 已解锁</span></CSHeader>}>
+        actions={!IS_ANON && unlockedCount > 0 && <CSButton iconName="share" onClick={() => setShareOpen(true)}>{t('platform.achv.share_btn', '分享成就')}</CSButton>}
+      >{t('platform.achv.heading', '成就')} <span className="muted-2">{unlockedCount} / {ACHIEVEMENTS.length} {t('platform.achv.unlocked_label', '已解锁')}</span></CSHeader>}>
         {ACHIEVEMENTS.length === 0 ? (
           <CSBox color="text-body-secondary" textAlign="center" padding="l">
-            {achv === null ? "加载中…" : "暂无成就。"}
+            {achv === null ? t('common.loading', '加载中…') : t('platform.achv.empty', '暂无成就。')}
           </CSBox>
         ) : (
           <AchievementWall items={ACHIEVEMENTS} />
@@ -1352,12 +1361,12 @@ function MeOverview() {
       <CSContainer header={
         <CSHeader variant="h2" actions={
           <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton variant={filter === "all" ? "primary" : "normal"} onClick={() => setFilter("all")}>全部</CSButton>
-            <CSButton variant={filter === "回合" ? "primary" : "normal"} onClick={() => setFilter("回合")}>回合</CSButton>
-            <CSButton variant={filter === "分支" ? "primary" : "normal"} onClick={() => setFilter("分支")}>分支</CSButton>
-            <CSButton variant={filter === "剧本" ? "primary" : "normal"} onClick={() => setFilter("剧本")}>剧本</CSButton>
+            <CSButton variant={filter === "all" ? "primary" : "normal"} onClick={() => setFilter("all")}>{t('common.all', '全部')}</CSButton>
+            <CSButton variant={filter === "回合" ? "primary" : "normal"} onClick={() => setFilter("回合")}>{t('platform.me.activity_tag_round', '回合')}</CSButton>
+            <CSButton variant={filter === "分支" ? "primary" : "normal"} onClick={() => setFilter("分支")}>{t('platform.me.activity_tag_branch', '分支')}</CSButton>
+            <CSButton variant={filter === "剧本" ? "primary" : "normal"} onClick={() => setFilter("剧本")}>{t('platform.me.activity_tag_script', '剧本')}</CSButton>
           </CSSpaceBetween>
-        }>最近活动</CSHeader>
+        }>{t('platform.me.recent_activity', '最近活动')}</CSHeader>
       }>
         <ol className="pl-activity">
           {filteredActivity.map((a, i) => (
@@ -1379,10 +1388,10 @@ function MeOverview() {
           {filteredActivity.length === 0 && (
             <CSBox color="text-body-secondary" textAlign="center" padding="l">
               {meActivity === null && !IS_ANON
-                ? "正在加载活动…"
+                ? t('platform.me.activity_loading', '正在加载活动…')
                 : (ACTIVITY.length === 0
-                    ? "暂无活动。开始游戏、开辟分支或导入剧本后,这里会显示真实记录。"
-                    : "未找到此分类的活动")}
+                    ? t('platform.me.activity_empty', '暂无活动。开始游戏、开辟分支或导入剧本后,这里会显示真实记录。')
+                    : t('platform.me.activity_no_filter', '未找到此分类的活动'))}
             </CSBox>
           )}
         </ol>
@@ -1392,6 +1401,7 @@ function MeOverview() {
 }
 
 function MeEditProfile() {
+  const { t } = useTranslation();
   // task 45：改读 reactive user（publishUser 写到 __USER_STATE，登录后是真用户）
   const user = useReactiveUser();
   const [form, setForm] = useStatePL({
@@ -1478,9 +1488,9 @@ function MeEditProfile() {
       } catch (_) {
         publishUser({ ...form });
       }
-      window.__apiToast?.("已保存资料", { kind: "ok", duration: 1600 });
+      window.__apiToast?.(t('platform.me.edit.saved', '已保存资料'), { kind: "ok", duration: 1600 });
     } catch (e) {
-      window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message, duration: 3000 });
+      window.__apiToast?.(t('platform.me.edit.save_failed', '保存失败'), { kind: "danger", detail: e?.message, duration: 3000 });
     } finally {
       setSaving(false);
     }
@@ -1489,12 +1499,12 @@ function MeEditProfile() {
   const onAvatarPick = async (file) => {
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) {
-      window.__apiToast?.("文件过大", { kind: "danger", detail: "最大 2 MB" });
+      window.__apiToast?.(t('platform.me.edit.file_too_large', '文件过大'), { kind: "danger", detail: t('platform.me.edit.max_size', '最大 2 MB') });
       return;
     }
     try {
       const res = await window.api.account.avatar(file);
-      window.__apiToast?.("头像已更新", { kind: "ok" });
+      window.__apiToast?.(t('platform.me.edit.avatar_updated', '头像已更新'), { kind: "ok" });
       if (res && res.avatar_url) {
         // 更新本地 state（AvatarImg 响应式）
         setAvatarUrl(res.avatar_url + '?t=' + Date.now());
@@ -1505,32 +1515,32 @@ function MeEditProfile() {
       }
       setUploadOpen(false);
     } catch (e) {
-      window.__apiToast?.("上传失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.edit.upload_failed', '上传失败'), { kind: "danger", detail: e?.message });
     }
   };
 
   const onResetAvatar = async () => {
     try {
       await window.api.account.avatarReset();
-      window.__apiToast?.("已恢复默认头像", { kind: "ok" });
+      window.__apiToast?.(t('platform.me.edit.avatar_reset', '已恢复默认头像'), { kind: "ok" });
       setResetAvatarOpen(false);
     } catch (e) {
-      window.__apiToast?.("操作失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.edit.op_failed', '操作失败'), { kind: "danger", detail: e?.message });
     }
   };
 
   return (
     <CSSpaceBetween size="l">
       {/* 头像 */}
-      <CSContainer header={<CSHeader variant="h2">头像</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_avatar', '头像')}</CSHeader>}>
         <CSSpaceBetween size="m">
           {mediaStudioOpen && (
             <MediaStudio
               open={mediaStudioOpen}
               onClose={() => setMediaStudioOpen(false)}
               target={{ type: 'user_avatar' }}
-              name={form.display_name || user.display_name || '用户'}
-              defaultPrompt={form.display_name ? `${form.display_name} 的用户头像` : '用户头像'}
+              name={form.display_name || user.display_name || t('platform.me.edit.default_user', '用户')}
+              defaultPrompt={form.display_name ? `${form.display_name} ${t('platform.me.edit.avatar_prompt_suffix', '的用户头像')}` : t('platform.me.edit.avatar_prompt_default', '用户头像')}
               onApplied={(url) => {
                 setAvatarUrl(url + '?t=' + Date.now());
                 setMediaStudioOpen(false);
@@ -1546,10 +1556,10 @@ function MeEditProfile() {
               className="pl-me-avatar large"
             />
             <div className="pl-me-avatar-actions">
-              <CSBox color="text-body-secondary" fontSize="body-s">支持 PNG / JPG / WEBP，建议 512×512。最大 2 MB。</CSBox>
+              <CSBox color="text-body-secondary" fontSize="body-s">{t('platform.me.edit.avatar_hint', '支持 PNG / JPG / WEBP，建议 512×512。最大 2 MB。')}</CSBox>
               <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton iconName="gen-ai" onClick={() => setMediaStudioOpen(true)}>✦ 更换头像</CSButton>
-                <CSButton iconName="remove" onClick={() => setResetAvatarOpen(true)}>使用默认</CSButton>
+                <CSButton iconName="gen-ai" onClick={() => setMediaStudioOpen(true)}>✦ {t('platform.me.edit.change_avatar', '更换头像')}</CSButton>
+                <CSButton iconName="remove" onClick={() => setResetAvatarOpen(true)}>{t('platform.me.edit.use_default', '使用默认')}</CSButton>
               </CSSpaceBetween>
             </div>
           </div>
@@ -1557,43 +1567,43 @@ function MeEditProfile() {
       </CSContainer>
 
       {/* 基本资料 */}
-      <CSContainer header={<CSHeader variant="h2">基本资料</CSHeader>} data-cap-anchor="settings.profile">
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_basic', '基本资料')}</CSHeader>} data-cap-anchor="settings.profile">
         <CSSpaceBetween size="l">
           <div className="pl-form-grid-2">
-            <Field label="显示名" hint="出现在游戏和评论里">
+            <Field label={t('platform.me.edit.field_display_name', '显示名')} hint={t('platform.me.edit.field_display_name_hint', '出现在游戏和评论里')}>
               <CSInput value={form.display_name} onChange={({ detail }) => u("display_name", detail.value)} />
             </Field>
-            <Field label="代词">
+            <Field label={t('platform.me.edit.field_pronouns', '代词')}>
               <CSSelect
-                selectedOption={[{value:"她/她",label:"她/她"},{value:"他/他",label:"他/他"},{value:"TA/TA",label:"TA/TA"},{value:"不公开",label:"不公开"}].find(o => o.value === form.pronouns) || null}
-                options={[{value:"她/她",label:"她/她"},{value:"他/他",label:"他/他"},{value:"TA/TA",label:"TA/TA"},{value:"不公开",label:"不公开"}]}
+                selectedOption={[{value:"她/她",label:"她/她"},{value:"他/他",label:"他/他"},{value:"TA/TA",label:"TA/TA"},{value:"不公开",label:t('platform.me.edit.pronouns_private','不公开')}].find(o => o.value === form.pronouns) || null}
+                options={[{value:"她/她",label:"她/她"},{value:"他/他",label:"他/他"},{value:"TA/TA",label:"TA/TA"},{value:"不公开",label:t('platform.me.edit.pronouns_private','不公开')}]}
                 onChange={({ detail }) => u("pronouns", detail.selectedOption.value)}
               />
             </Field>
-            <Field label="用户名" hint="登录用，6 个月可改一次" required>
+            <Field label={t('platform.me.edit.field_username', '用户名')} hint={t('platform.me.edit.field_username_hint', '登录用，6 个月可改一次')} required>
               <CSInput value={form.username} onChange={({ detail }) => u("username", detail.value)} />
             </Field>
-            <Field label="真实姓名" hint="仅自己可见">
+            <Field label={t('platform.me.edit.field_real_name', '真实姓名')} hint={t('platform.me.edit.field_real_name_hint', '仅自己可见')}>
               <CSInput value={form.real_name} onChange={({ detail }) => u("real_name", detail.value)} />
             </Field>
-            <Field label="性别">
+            <Field label={t('platform.me.edit.field_gender', '性别')}>
               <CSSpaceBetween direction="horizontal" size="xs">
-                {[{v: "female", l: "女"}, {v: "male", l: "男"}, {v: "other", l: "其他"}, {v: "unspecified", l: "不公开"}].map(o => (
+                {[{v: "female", l: t('platform.me.edit.gender_female','女')}, {v: "male", l: t('platform.me.edit.gender_male','男')}, {v: "other", l: t('platform.me.edit.gender_other','其他')}, {v: "unspecified", l: t('platform.me.edit.gender_private','不公开')}].map(o => (
                   <CSButton key={o.v} variant={form.gender === o.v ? "primary" : "normal"} onClick={() => u("gender", o.v)}>{o.l}</CSButton>
                 ))}
               </CSSpaceBetween>
             </Field>
-            <Field label="生日">
+            <Field label={t('platform.me.edit.field_birthday', '生日')}>
               <CSInput type="date" value={form.birthday} onChange={({ detail }) => u("birthday", detail.value)} />
             </Field>
-            <Field label="所在地">
-              <CSInput value={form.location} onChange={({ detail }) => u("location", detail.value)} placeholder="例：上海" />
+            <Field label={t('platform.me.edit.field_location', '所在地')}>
+              <CSInput value={form.location} onChange={({ detail }) => u("location", detail.value)} placeholder={t('platform.me.edit.field_location_ph', '例：上海')} />
             </Field>
-            <Field label="个人网站">
+            <Field label={t('platform.me.edit.field_website', '个人网站')}>
               <CSInput value={form.website} onChange={({ detail }) => u("website", detail.value)} placeholder="https://..." />
             </Field>
           </div>
-          <Field label="简介" hint="280 字以内">
+          <Field label={t('platform.me.edit.field_bio', '简介')} hint={t('platform.me.edit.field_bio_hint', '280 字以内')}>
             <CSTextarea
               rows={3}
               value={form.bio}
@@ -1605,28 +1615,28 @@ function MeEditProfile() {
       </CSContainer>
 
       {/* 联系方式 */}
-      <CSContainer header={<CSHeader variant="h2">联系方式</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_contact', '联系方式')}</CSHeader>}>
         <div className="pl-form-grid-2">
-          <Field label="邮箱" hint="用于通知与找回密码">
+          <Field label={t('platform.me.edit.field_email', '邮箱')} hint={t('platform.me.edit.field_email_hint', '用于通知与找回密码')}>
             <CSInput value={form.email} onChange={({ detail }) => u("email", detail.value)} placeholder="you@example.com" />
           </Field>
-          <Field label="手机" hint="选填，仅自己可见">
-            <CSInput value={form.phone} onChange={({ detail }) => u("phone", detail.value)} placeholder="选填" />
+          <Field label={t('platform.me.edit.field_phone', '手机')} hint={t('platform.me.edit.field_phone_hint', '选填，仅自己可见')}>
+            <CSInput value={form.phone} onChange={({ detail }) => u("phone", detail.value)} placeholder={t('platform.me.edit.field_optional', '选填')} />
           </Field>
         </div>
       </CSContainer>
 
       {/* 本地化 */}
-      <CSContainer header={<CSHeader variant="h2">本地化</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_locale', '本地化')}</CSHeader>}>
         <div className="pl-form-grid-2">
-          <Field label="界面语言">
+          <Field label={t('platform.me.edit.field_language', '界面语言')}>
             <CSSelect
               selectedOption={[{value:"zh-CN",label:"简体中文"},{value:"zh-TW",label:"繁體中文"},{value:"en",label:"English (Beta)"},{value:"ja",label:"日本語"}].find(o => o.value === form.language) || null}
               options={[{value:"zh-CN",label:"简体中文"},{value:"zh-TW",label:"繁體中文"},{value:"en",label:"English (Beta)"},{value:"ja",label:"日本語"}]}
               onChange={({ detail }) => u("language", detail.selectedOption.value)}
             />
           </Field>
-          <Field label="时区">
+          <Field label={t('platform.me.edit.field_timezone', '时区')}>
             <CSSelect
               selectedOption={[{value:"Asia/Shanghai",label:"UTC+8 · 上海"},{value:"Asia/Tokyo",label:"UTC+9 · 东京"},{value:"UTC",label:"UTC"},{value:"America/Los_Angeles",label:"UTC-8 · 洛杉矶"}].find(o => o.value === form.timezone) || null}
               options={[{value:"Asia/Shanghai",label:"UTC+8 · 上海"},{value:"Asia/Tokyo",label:"UTC+9 · 东京"},{value:"UTC",label:"UTC"},{value:"America/Los_Angeles",label:"UTC-8 · 洛杉矶"}]}
@@ -1638,9 +1648,9 @@ function MeEditProfile() {
 
       {/* 保存按钮行 */}
       <CSSpaceBetween direction="horizontal" size="xs">
-        <CSButton onClick={() => plNavigate('me')}>取消</CSButton>
+        <CSButton onClick={() => plNavigate('me')}>{t('common.cancel')}</CSButton>
         <CSButton variant="primary" onClick={onSave} loading={saving}>
-          {saving ? "保存中…" : "保存资料"}
+          {saving ? t('platform.me.edit.saving', '保存中…') : t('platform.me.edit.save_btn', '保存资料')}
         </CSButton>
       </CSSpaceBetween>
 
@@ -1648,17 +1658,17 @@ function MeEditProfile() {
         style={{display: "none"}} onChange={(e) => onAvatarPick(e.target.files?.[0])} />
       <ConfirmModal
         open={uploadOpen}
-        title="上传新头像"
-        body={<>支持 PNG / JPG / WEBP，建议 512×512。最大 2 MB。</>}
-        confirmLabel="选择文件"
+        title={t('platform.me.edit.upload_title', '上传新头像')}
+        body={<>{t('platform.me.edit.avatar_hint', '支持 PNG / JPG / WEBP，建议 512×512。最大 2 MB。')}</>}
+        confirmLabel={t('platform.me.edit.choose_file', '选择文件')}
         onClose={() => setUploadOpen(false)}
         onConfirm={() => { avatarInputRef.current?.click(); setUploadOpen(false); }}
       />
       <ConfirmModal
         open={resetAvatarOpen}
-        title="恢复为默认头像？"
-        body={<>将删除当前头像，使用由显示名首字生成的占位头像。</>}
-        confirmLabel="恢复默认"
+        title={t('platform.me.edit.reset_avatar_title', '恢复为默认头像？')}
+        body={<>{t('platform.me.edit.reset_avatar_body', '将删除当前头像，使用由显示名首字生成的占位头像。')}</>}
+        confirmLabel={t('platform.me.edit.reset_avatar_confirm', '恢复默认')}
         onClose={() => setResetAvatarOpen(false)} onConfirm={onResetAvatar}
       />
     </CSSpaceBetween>
@@ -1666,13 +1676,14 @@ function MeEditProfile() {
 }
 
 function MeUserSettings() {
+  const { t } = useTranslation();
   const user = useReactiveUser();
   const hasPassword = user.has_password !== false;
   // [round-3-P2] 原 useAutoSave(scope="me") + tog 只调 save(label):label 被当成 field、无 val
   //  → 走 useAutoSave 的「仅 toast 不落库」兼容分支,这些隐私开关全部只弹"已保存"却从不持久化。
   //  且 scope="me" 会把键写成 me.two_fa,与下面 loader 读取的扁平 p.two_fa 不符 → 双重失效。
   //  修:scope=null 写扁平键 + tog 传 (field, value) 真正落库。
-  const save = useAutoSave("用户设置", null);
+  const save = useAutoSave(t('platform.me.settings.label', '用户设置'), null);
   const tog = (setter, field) => (v) => { setter(v); save(field, v); };
   // 初始值为 null，等后端拉取完成后再用真实值初始化，防止 mount 时以硬编码默认值覆盖已存设置
   const [twofa, setTwofa] = useStatePL(null);
@@ -1778,25 +1789,25 @@ function MeUserSettings() {
 
   const onChangePassword = async (vals) => {
     if (!vals?.next || vals.next !== vals.confirm) {
-      window.__apiToast?.("两次密码不一致", { kind: "danger" });
+      window.__apiToast?.(t('platform.me.settings.pw_mismatch', '两次密码不一致'), { kind: "danger" });
       return;
     }
     try {
       await window.api.auth.changePassword({ current: vals.current, next: vals.next });
-      window.__apiToast?.("密码已修改", { kind: "ok" });
+      window.__apiToast?.(t('platform.me.settings.pw_changed', '密码已修改'), { kind: "ok" });
       setPwOpen(false);
     } catch (e) {
-      window.__apiToast?.("修改失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.settings.pw_change_failed', '修改失败'), { kind: "danger", detail: e?.message });
     }
   };
 
   const onRevokeSession = async (sid) => {
     try {
       await window.api.auth.sessionsRevoke(sid);
-      window.__apiToast?.("已下线", { kind: "ok" });
+      window.__apiToast?.(t('platform.me.settings.session_revoked', '已下线'), { kind: "ok" });
       setSessions(s => s.filter(x => x.id !== sid));
     } catch (e) {
-      window.__apiToast?.("下线失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.settings.session_revoke_failed', '下线失败'), { kind: "danger", detail: e?.message });
     }
   };
 
@@ -1804,10 +1815,10 @@ function MeUserSettings() {
     setBusyRevokeAll(true);
     try {
       await window.api.auth.revokeAllSessions();
-      window.__apiToast?.("已全部下线", { kind: "ok" });
+      window.__apiToast?.(t('platform.me.settings.all_revoked', '已全部下线'), { kind: "ok" });
       setSessions(s => s.filter(x => x.current));
     } catch (e) {
-      window.__apiToast?.("下线失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.settings.session_revoke_failed', '下线失败'), { kind: "danger", detail: e?.message });
     } finally {
       setBusyRevokeAll(false);
     }
@@ -1816,10 +1827,10 @@ function MeUserSettings() {
   const onExportData = async (vals) => {
     try {
       const r = await window.api.account.exportData(vals);
-      window.__apiToast?.("已申请导出", { kind: "ok", detail: r?.message || "完成后会邮件通知" });
+      window.__apiToast?.(t('platform.me.settings.export_requested', '已申请导出'), { kind: "ok", detail: r?.message || t('platform.me.settings.export_email_notice', '完成后会邮件通知') });
       setExportOpen(false);
     } catch (e) {
-      window.__apiToast?.("申请失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.settings.export_failed', '申请失败'), { kind: "danger", detail: e?.message });
     }
   };
 
@@ -1827,10 +1838,10 @@ function MeUserSettings() {
     try {
       await window.api.account.visibility(vals || {});
       setVisibilitySettings(vals || {});
-      window.__apiToast?.("已保存可见性", { kind: "ok" });
+      window.__apiToast?.(t('platform.me.settings.visibility_saved', '已保存可见性'), { kind: "ok" });
       setVisibilityOpen(false);
     } catch (e) {
-      window.__apiToast?.("保存失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.settings.save_failed', '保存失败'), { kind: "danger", detail: e?.message });
     }
   };
 
@@ -1838,11 +1849,11 @@ function MeUserSettings() {
     setBusyDeact(true);
     try {
       await window.api.account.deactivate();
-      window.__apiToast?.("账号已停用", { kind: "ok" });
+      window.__apiToast?.(t('platform.me.settings.deactivated', '账号已停用'), { kind: "ok" });
       setConfirmDeact(false);
       setTimeout(() => location.replace("Login.html"), 800);
     } catch (e) {
-      window.__apiToast?.("停用失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.settings.deactivate_failed', '停用失败'), { kind: "danger", detail: e?.message });
       setBusyDeact(false);
     }
   };
@@ -1851,11 +1862,11 @@ function MeUserSettings() {
     setBusyDelete(true);
     try {
       await window.api.account.deleteAccount({});
-      window.__apiToast?.("账号已删除", { kind: "ok" });
+      window.__apiToast?.(t('platform.me.settings.account_deleted', '账号已删除'), { kind: "ok" });
       setConfirmDelete(false);
       setTimeout(() => location.replace("Login.html"), 800);
     } catch (e) {
-      window.__apiToast?.("删除失败", { kind: "danger", detail: e?.message });
+      window.__apiToast?.(t('platform.me.settings.delete_failed', '删除失败'), { kind: "danger", detail: e?.message });
       setBusyDelete(false);
     }
   };
@@ -1869,63 +1880,63 @@ function MeUserSettings() {
   return (
     <CSSpaceBetween size="l" data-cap-anchor="me.settings">
       {/* 隐私 · 公开范围 */}
-      <CSContainer header={<CSHeader variant="h2">隐私 · 公开范围</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.settings.section_privacy', '隐私 · 公开范围')}</CSHeader>}>
         <CSSpaceBetween size="l">
           <SettingRow
-            title="公开个人主页"
-            desc="开启后，其他用户可以通过 @用户名 查看你的成就墙和最近活动。"
+            title={t('platform.me.settings.public_profile', '公开个人主页')}
+            desc={t('platform.me.settings.public_profile_desc', '开启后，其他用户可以通过 @用户名 查看你的成就墙和最近活动。')}
             control={<SettingsToggle on={publicProfile} set={tog(setPublicProfile, "public_profile")} />}
           />
           <SettingRow
-            title="允许搜索"
-            desc="允许通过显示名或用户名在平台内搜索找到你。"
+            title={t('platform.me.settings.searchable', '允许搜索')}
+            desc={t('platform.me.settings.searchable_desc', '允许通过显示名或用户名在平台内搜索找到你。')}
             control={<SettingsToggle on={searchable} set={tog(setSearchable, "searchable")} />}
           />
           <SettingRow
-            title="资料字段可见性"
-            desc="逐项控制谁能看到你的真实姓名、所在地、生日等。"
-            control={<CSButton onClick={() => setVisibilityOpen(true)}>逐项配置</CSButton>}
+            title={t('platform.me.settings.visibility', '资料字段可见性')}
+            desc={t('platform.me.settings.visibility_desc', '逐项控制谁能看到你的真实姓名、所在地、生日等。')}
+            control={<CSButton onClick={() => setVisibilityOpen(true)}>{t('platform.me.settings.visibility_btn', '逐项配置')}</CSButton>}
           />
         </CSSpaceBetween>
       </CSContainer>
 
       {/* 数据共享 · 合规 */}
-      <CSContainer header={<CSHeader variant="h2">数据共享 · 合规</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.settings.section_data', '数据共享 · 合规')}</CSHeader>}>
         <CSSpaceBetween size="l">
           <SettingRow
-            title="匿名用量统计"
-            desc="把按钮点击 / 页面停留时长（不含剧本内容）匿名上报给团队，用于改进体验。"
+            title={t('platform.me.settings.share_usage', '匿名用量统计')}
+            desc={t('platform.me.settings.share_usage_desc', '把按钮点击 / 页面停留时长（不含剧本内容）匿名上报给团队，用于改进体验。')}
             control={<SettingsToggle on={shareUsage} set={tog(setShareUsage, "share_usage")} />}
           />
           <SettingRow
-            title="崩溃 / 错误报告"
-            desc="出现错误时上传堆栈信息和最近一次操作。剧本内容不会被上传。"
+            title={t('platform.me.settings.share_crash', '崩溃 / 错误报告')}
+            desc={t('platform.me.settings.share_crash_desc', '出现错误时上传堆栈信息和最近一次操作。剧本内容不会被上传。')}
             control={<SettingsToggle on={shareCrash} set={tog(setShareCrash, "share_crash")} />}
           />
           <SettingRow
-            title="个性化推荐"
-            desc="基于你的剧本与角色卡向你推荐 Skill 和 MCP。"
+            title={t('platform.me.settings.personalized', '个性化推荐')}
+            desc={t('platform.me.settings.personalized_desc', '基于你的剧本与角色卡向你推荐 Skill 和 MCP。')}
             control={<SettingsToggle on={adsTrack} set={tog(setAdsTrack, "ads_track")} />}
           />
           <SettingRow
-            title="GDPR / 个人信息保护合规"
-            desc="本平台不向第三方分享你的剧本内容、玩家变量或私聊。详见隐私政策。"
-            control={<CSButton iconName="file-open" onClick={(e) => { e.preventDefault(); setPolicyOpen(true); }}>隐私政策</CSButton>}
+            title={t('platform.me.settings.gdpr', 'GDPR / 个人信息保护合规')}
+            desc={t('platform.me.settings.gdpr_desc', '本平台不向第三方分享你的剧本内容、玩家变量或私聊。详见隐私政策。')}
+            control={<CSButton iconName="file-open" onClick={(e) => { e.preventDefault(); setPolicyOpen(true); }}>{t('platform.me.settings.privacy_policy', '隐私政策')}</CSButton>}
           />
         </CSSpaceBetween>
       </CSContainer>
 
       {/* 账号 · 安全 */}
-      <CSContainer header={<CSHeader variant="h2">账号 · 安全</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.settings.section_security', '账号 · 安全')}</CSHeader>}>
         <CSSpaceBetween size="l">
           <SettingRow
-            title={hasPassword ? "修改密码" : "设置密码"}
-            desc={hasPassword ? "建议每 90 天更换一次，至少 12 位字符 + 大小写 + 数字。" : "当前账号通过邮箱链接登录，尚未设置密码；可直接设置一组新密码。"}
-            control={<CSButton iconName="lock-private" onClick={() => setPwOpen(true)}>{hasPassword ? "修改密码" : "设置密码"}</CSButton>}
+            title={hasPassword ? t('platform.me.settings.change_password', '修改密码') : t('platform.me.settings.set_password', '设置密码')}
+            desc={hasPassword ? t('platform.me.settings.change_password_desc', '建议每 90 天更换一次，至少 12 位字符 + 大小写 + 数字。') : t('platform.me.settings.set_password_desc', '当前账号通过邮箱链接登录，尚未设置密码；可直接设置一组新密码。')}
+            control={<CSButton iconName="lock-private" onClick={() => setPwOpen(true)}>{hasPassword ? t('platform.me.settings.change_password', '修改密码') : t('platform.me.settings.set_password', '设置密码')}</CSButton>}
           />
           <SettingRow
-            title="二次验证（2FA）"
-            desc="通过 Authenticator App 或手机短信进行二次验证。"
+            title={t('platform.me.settings.two_fa', '二次验证（2FA）')}
+            desc={t('platform.me.settings.two_fa_desc', '通过 Authenticator App 或手机短信进行二次验证。')}
             control={
               <CSSpaceBetween direction="horizontal" size="xs">
                 {twofa && <span className="pill ok"><span className="dot ok" /> Authenticator</span>}
@@ -1934,13 +1945,11 @@ function MeUserSettings() {
             }
           />
           {(() => {
-            // task 49：原 desc 写死 "3 个登录会话 · 12 分钟前 / 14 次登录"。改成
-            // 真实派生：sessions.length + 最近一条 last_seen_at；30 天内 login_ok 次数。
             const nSess = sessions.length;
             const cur = sessions.find(s => s.current) || sessions[0];
             const sessDesc = nSess === 0
-              ? "尚未拉取活跃会话。"
-              : `当前 ${nSess} 个登录会话${cur ? ` · 最近：${cur.device}${cur.ts ? " · " + cur.ts : ""}` : ""}。`;
+              ? t('platform.me.settings.sessions_none', '尚未拉取活跃会话。')
+              : t('platform.me.settings.sessions_desc', { n: nSess, device: cur?.device, ts: cur?.ts, defaultValue: `当前 ${nSess} 个登录会话${cur ? ` · 最近：${cur.device}${cur.ts ? " · " + cur.ts : ""}` : ""}。` });
             const cutoff = Date.now() - 30 * 86400_000;
             const okIn30d = loginHistory.filter(h => {
               if (h.result !== "ok") return false;
@@ -1948,18 +1957,18 @@ function MeUserSettings() {
             }).length;
             const blocked = loginHistory.filter(h => h.result !== "ok").length;
             const histDesc = loginHistory.length === 0
-              ? "尚未拉取登录历史。"
-              : `最近 30 天 ${okIn30d} 次成功登录${blocked ? `，${blocked} 次被拦截` : "，无异常 IP"}。`;
+              ? t('platform.me.settings.history_none', '尚未拉取登录历史。')
+              : t('platform.me.settings.history_desc', { ok: okIn30d, blocked, defaultValue: `最近 30 天 ${okIn30d} 次成功登录${blocked ? `，${blocked} 次被拦截` : "，无异常 IP"}。` });
             return <>
               <SettingRow
-                title="活跃会话"
+                title={t('platform.me.settings.active_sessions', '活跃会话')}
                 desc={sessDesc}
-                control={<CSButton iconName="visibility-on" onClick={() => setSessionsOpen(true)}>查看会话</CSButton>}
+                control={<CSButton iconName="visibility-on" onClick={() => setSessionsOpen(true)}>{t('platform.me.settings.view_sessions', '查看会话')}</CSButton>}
               />
               <SettingRow
-                title="登录历史"
+                title={t('platform.me.settings.login_history', '登录历史')}
                 desc={histDesc}
-                control={<CSButton iconName="status-info" onClick={() => setHistoryOpen(true)}>查看日志</CSButton>}
+                control={<CSButton iconName="status-info" onClick={() => setHistoryOpen(true)}>{t('platform.me.settings.view_history', '查看日志')}</CSButton>}
               />
             </>;
           })()}
@@ -1967,125 +1976,125 @@ function MeUserSettings() {
       </CSContainer>
 
       {/* 通知 */}
-      <CSContainer header={<CSHeader variant="h2">通知</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.settings.section_notif', '通知')}</CSHeader>}>
         <SettingRow
-          title="邮件通知"
-          desc="重要安全事件、订阅变更、长时间未登录提醒。"
+          title={t('platform.me.settings.email_notif', '邮件通知')}
+          desc={t('platform.me.settings.email_notif_desc', '重要安全事件、订阅变更、长时间未登录提醒。')}
           control={<SettingsToggle on={emailNotif} set={tog(setEmailNotif, "email_notif")} />}
         />
       </CSContainer>
 
       {/* 数据所有权 */}
-      <CSContainer header={<CSHeader variant="h2">数据所有权</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.settings.section_ownership', '数据所有权')}</CSHeader>}>
         <CSSpaceBetween size="l">
           <SettingRow
-            title="导出我的数据"
-            desc="打包导出全部剧本、存档、记忆、库资产、用量记录。生成后通过邮件发送下载链接。"
-            control={<CSButton iconName="download" onClick={() => setExportOpen(true)}>申请导出</CSButton>}
+            title={t('platform.me.settings.export_data', '导出我的数据')}
+            desc={t('platform.me.settings.export_data_desc', '打包导出全部剧本、存档、记忆、库资产、用量记录。生成后通过邮件发送下载链接。')}
+            control={<CSButton iconName="download" onClick={() => setExportOpen(true)}>{t('platform.me.settings.export_btn', '申请导出')}</CSButton>}
           />
           <SettingRow
-            title="停用账号"
-            desc="停用后无法登录，剧本和存档保留 90 天，期间可随时恢复。"
-            control={<CSButton variant="normal" onClick={() => setConfirmDeact(true)}>停用账号</CSButton>}
+            title={t('platform.me.settings.deactivate', '停用账号')}
+            desc={t('platform.me.settings.deactivate_desc', '停用后无法登录，剧本和存档保留 90 天，期间可随时恢复。')}
+            control={<CSButton variant="normal" onClick={() => setConfirmDeact(true)}>{t('platform.me.settings.deactivate', '停用账号')}</CSButton>}
           />
           <SettingRow
-            title="永久删除账号"
-            desc="立刻删除全部账号信息、剧本、存档、库资产，无法恢复。"
-            control={<CSButton variant="normal" iconName="remove" onClick={() => setConfirmDelete(true)}>删除账号</CSButton>}
+            title={t('platform.me.settings.delete_account', '永久删除账号')}
+            desc={t('platform.me.settings.delete_account_desc', '立刻删除全部账号信息、剧本、存档、库资产，无法恢复。')}
+            control={<CSButton variant="normal" iconName="remove" onClick={() => setConfirmDelete(true)}>{t('platform.me.settings.delete_btn', '删除账号')}</CSButton>}
           />
         </CSSpaceBetween>
       </CSContainer>
 
       <ConfirmModal
         open={confirmDeact}
-        title="停用账号？"
-        body={<>账号停用 90 天内可登录恢复。期间剧本与存档保留但不可访问。</>}
-        confirmLabel="停用"
+        title={t('platform.me.settings.deactivate_confirm_title', '停用账号？')}
+        body={<>{t('platform.me.settings.deactivate_confirm_body', '账号停用 90 天内可登录恢复。期间剧本与存档保留但不可访问。')}</>}
+        confirmLabel={t('platform.me.settings.deactivate_btn', '停用')}
         busy={busyDeact}
         onClose={() => setConfirmDeact(false)} onConfirm={onDeactivate}
       />
       <ConfirmModal
         open={confirmDelete}
-        title="永久删除账号？"
-        body={<>这会<strong>立刻</strong>删除你的账号、剧本、存档、库资产，<strong>无法恢复</strong>。删除后无法用同一邮箱再注册（30 天冷冻期）。</>}
-        danger confirmLabel="确认删除"
+        title={t('platform.me.settings.delete_confirm_title', '永久删除账号？')}
+        body={<>{t('platform.me.settings.delete_confirm_body_pre', '这会')}<strong>{t('platform.me.settings.delete_confirm_now', '立刻')}</strong>{t('platform.me.settings.delete_confirm_body_mid', '删除你的账号、剧本、存档、库资产，')}<strong>{t('platform.me.settings.delete_confirm_irreversible', '无法恢复')}</strong>{t('platform.me.settings.delete_confirm_body_post', '。删除后无法用同一邮箱再注册（30 天冷冻期）。')}</>}
+        danger confirmLabel={t('platform.me.settings.delete_confirm_btn', '确认删除')}
         busy={busyDelete}
         onClose={() => setConfirmDelete(false)} onConfirm={onDeleteAccount}
       />
       <PromptModal
         open={pwOpen}
-        eyebrow="修改密码"
-        title={hasPassword ? "设置新密码" : "设置登录密码"}
+        eyebrow={t('platform.me.settings.pw_eyebrow', '修改密码')}
+        title={hasPassword ? t('platform.me.settings.pw_title_change', '设置新密码') : t('platform.me.settings.pw_title_set', '设置登录密码')}
         hint="POST /api/auth/password"
         fields={[
-          ...(hasPassword ? [{ key: "current", label: "当前密码", required: true, type: "password" }] : []),
-          { key: "next", label: "新密码", required: true, type: "password", hint: "至少 12 位 · 大小写 + 数字" },
-          { key: "confirm", label: "确认新密码", required: true, type: "password" },
+          ...(hasPassword ? [{ key: "current", label: t('platform.me.settings.pw_current', '当前密码'), required: true, type: "password" }] : []),
+          { key: "next", label: t('platform.me.settings.pw_new', '新密码'), required: true, type: "password", hint: t('platform.me.settings.pw_hint', '至少 12 位 · 大小写 + 数字') },
+          { key: "confirm", label: t('platform.me.settings.pw_confirm', '确认新密码'), required: true, type: "password" },
         ]}
-        submitLabel={hasPassword ? "修改密码" : "设置密码"}
+        submitLabel={hasPassword ? t('platform.me.settings.change_password', '修改密码') : t('platform.me.settings.set_password', '设置密码')}
         onClose={() => setPwOpen(false)}
         onConfirm={onChangePassword}
       />
       <PromptModal
         open={visibilityOpen}
-        eyebrow="资料字段可见性"
-        title="逐项控制谁能看到"
+        eyebrow={t('platform.me.settings.visibility', '资料字段可见性')}
+        title={t('platform.me.settings.visibility_title', '逐项控制谁能看到')}
         hint="POST /api/profile/visibility · 仅影响他人查看"
         fields={[
-          { key: "real_name", label: "真实姓名", type: "select", default: "self",
-            options: [{value: "self", label: "仅自己"}, {value: "friends", label: "好友"}, {value: "public", label: "所有人"}] },
-          { key: "gender", label: "性别", type: "select", default: "friends",
-            options: [{value: "self", label: "仅自己"}, {value: "friends", label: "好友"}, {value: "public", label: "所有人"}] },
-          { key: "birthday", label: "生日", type: "select", default: "self",
-            options: [{value: "self", label: "仅自己"}, {value: "friends", label: "好友"}, {value: "public", label: "所有人"}] },
-          { key: "location", label: "所在地", type: "select", default: "public",
-            options: [{value: "self", label: "仅自己"}, {value: "friends", label: "好友"}, {value: "public", label: "所有人"}] },
-          { key: "email", label: "邮箱", type: "select", default: "self",
-            options: [{value: "self", label: "仅自己"}, {value: "friends", label: "好友"}, {value: "public", label: "所有人"}] },
-          { key: "phone", label: "手机", type: "select", default: "self",
-            options: [{value: "self", label: "仅自己"}, {value: "friends", label: "好友"}, {value: "public", label: "所有人"}] },
+          { key: "real_name", label: t('platform.me.edit.field_real_name', '真实姓名'), type: "select", default: "self",
+            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
+          { key: "gender", label: t('platform.me.edit.field_gender', '性别'), type: "select", default: "friends",
+            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
+          { key: "birthday", label: t('platform.me.edit.field_birthday', '生日'), type: "select", default: "self",
+            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
+          { key: "location", label: t('platform.me.edit.field_location', '所在地'), type: "select", default: "public",
+            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
+          { key: "email", label: t('platform.me.edit.field_email', '邮箱'), type: "select", default: "self",
+            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
+          { key: "phone", label: t('platform.me.edit.field_phone', '手机'), type: "select", default: "self",
+            options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
         ]}
-        submitLabel="保存可见性"
+        submitLabel={t('platform.me.settings.visibility_save', '保存可见性')}
         onClose={() => setVisibilityOpen(false)}
         onConfirm={onSaveVisibility}
       />
       <PromptModal
         open={exportOpen}
-        eyebrow="导出数据"
-        title="选择要导出的内容"
+        eyebrow={t('platform.me.settings.export_eyebrow', '导出数据')}
+        title={t('platform.me.settings.export_title', '选择要导出的内容')}
         hint="POST /api/account/export · 生成后通过邮件发送下载链接（链接 7 天有效）"
         fields={[
-          { key: "scope", label: "范围", type: "select", default: "all",
+          { key: "scope", label: t('platform.me.settings.export_scope', '范围'), type: "select", default: "all",
             options: [
-              { value: "all",      label: "全部 · 剧本 · 存档 · 库 · 用量" },
-              { value: "scripts",  label: "仅剧本与章节" },
-              { value: "saves",    label: "仅存档与分支" },
-              { value: "library",  label: "仅库资产" },
-              { value: "usage",    label: "仅用量日志" },
+              { value: "all",      label: t('platform.me.settings.export_scope_all', '全部 · 剧本 · 存档 · 库 · 用量') },
+              { value: "scripts",  label: t('platform.me.settings.export_scope_scripts', '仅剧本与章节') },
+              { value: "saves",    label: t('platform.me.settings.export_scope_saves', '仅存档与分支') },
+              { value: "library",  label: t('platform.me.settings.export_scope_library', '仅库资产') },
+              { value: "usage",    label: t('platform.me.settings.export_scope_usage', '仅用量日志') },
             ] },
-          { key: "format", label: "格式", type: "select", default: "zip",
+          { key: "format", label: t('platform.me.settings.export_format', '格式'), type: "select", default: "zip",
             options: [
-              { value: "zip", label: "ZIP · 含 JSON + 附件" },
-              { value: "json", label: "JSON · 仅元数据" },
+              { value: "zip", label: t('platform.me.settings.export_format_zip', 'ZIP · 含 JSON + 附件') },
+              { value: "json", label: t('platform.me.settings.export_format_json', 'JSON · 仅元数据') },
             ] },
-          { key: "email", label: "接收邮箱", required: true, default: "" },
+          { key: "email", label: t('platform.me.settings.export_email', '接收邮箱'), required: true, default: "" },
         ]}
-        submitLabel="申请导出"
+        submitLabel={t('platform.me.settings.export_btn', '申请导出')}
         onClose={() => setExportOpen(false)}
         onConfirm={onExportData}
       />
       {sessionsOpen && (
         <Modal
           open
-          eyebrow="活跃会话"
-          title={sessions.length === 0 ? "暂无活跃会话" : `${sessions.length} 个登录中`}
+          eyebrow={t('platform.me.settings.active_sessions', '活跃会话')}
+          title={sessions.length === 0 ? t('platform.me.settings.sessions_empty', '暂无活跃会话') : t('platform.me.settings.sessions_title', { n: sessions.length, defaultValue: `${sessions.length} 个登录中` })}
           width={620}
           onClose={() => setSessionsOpen(false)}
           footer={<>
             <span className="muted-2" style={{fontSize: 11.5}}>POST /api/auth/sessions/revoke</span>
             <div style={{display: "flex", gap: 8}}>
-              <button className="btn ghost" onClick={() => setSessionsOpen(false)}>关闭</button>
-              <button className="btn danger" onClick={onRevokeAll} disabled={busyRevokeAll}><Icon name="close" size={12} /> 全部下线（保留当前）</button>
+              <button className="btn ghost" onClick={() => setSessionsOpen(false)}>{t('common.close', '关闭')}</button>
+              <button className="btn danger" onClick={onRevokeAll} disabled={busyRevokeAll}><Icon name="close" size={12} /> {t('platform.me.settings.revoke_all', '全部下线（保留当前）')}</button>
             </div>
           </>}
         >
@@ -2096,13 +2105,13 @@ function MeUserSettings() {
                   <div className="pl-session-body">
                     <div>
                       <strong>{s.device}</strong>
-                      {s.current && <span className="pill ok" style={{marginLeft: 6}}><span className="dot ok pulse" /> 当前</span>}
+                      {s.current && <span className="pill ok" style={{marginLeft: 6}}><span className="dot ok pulse" /> {t('platform.me.settings.session_current', '当前')}</span>}
                     </div>
                     <span className="muted-2 mono" style={{fontSize: 11}}>{s.loc} · {s.ip} · {s.ts}</span>
                   </div>
                   {!s.current && (
                     <button className="btn ghost" style={{height: 26, fontSize: 11.5}} onClick={() => onRevokeSession(s.id)}>
-                      <Icon name="close" size={11} /> 强制下线
+                      <Icon name="close" size={11} /> {t('platform.me.settings.force_logout', '强制下线')}
                     </button>
                   )}
                 </li>
@@ -2113,33 +2122,33 @@ function MeUserSettings() {
       {historyOpen && (
         <Modal
           open
-          eyebrow="登录日志"
-          title={`最近登录 · ${loginHistory.length} 次`}
+          eyebrow={t('platform.me.settings.login_history_eyebrow', '登录日志')}
+          title={t('platform.me.settings.login_history_title', { n: loginHistory.length, defaultValue: `最近登录 · ${loginHistory.length} 次` })}
           width={640}
           onClose={() => setHistoryOpen(false)}
           footer={<>
             <span className="muted-2" style={{fontSize: 11.5}}>GET /api/auth/login-history</span>
             <div style={{display: "flex", gap: 8}}>
-              <button className="btn ghost" onClick={() => setHistoryOpen(false)}>关闭</button>
+              <button className="btn ghost" onClick={() => setHistoryOpen(false)}>{t('common.close', '关闭')}</button>
               <button className="btn ghost" onClick={() => {
                 const url = window.api.base + "/api/v1/auth/login-history?format=csv";
                 window.open(url, "_blank");
-              }}><Icon name="download" size={12} /> 导出 CSV</button>
+              }}><Icon name="download" size={12} /> {t('platform.me.settings.export_csv', '导出 CSV')}</button>
             </div>
           </>}
         >
             <ul className="pl-session-list">
               {loginHistory.length === 0 ? (
-                <li className="muted" style={{padding: 16, textAlign: "center"}}>暂无记录</li>
+                <li className="muted" style={{padding: 16, textAlign: "center"}}>{t('platform.me.settings.history_empty', '暂无记录')}</li>
               ) : loginHistory.map((r, i) => (
                 <li key={i} className="pl-history-row">
                   <span className="mono muted-2" style={{fontSize: 11, width: 92}}>{r.ts}</span>
                   <span style={{fontSize: 12.5, flex: 1, minWidth: 0}}>{r.dev}</span>
                   <span className="mono muted-2" style={{fontSize: 11}}>{r.ip}</span>
                   {r.result === "ok" ? (
-                    <span className="pill ok" style={{fontSize: 10.5}}><span className="dot ok" /> 成功</span>
+                    <span className="pill ok" style={{fontSize: 10.5}}><span className="dot ok" /> {t('platform.me.settings.login_ok', '成功')}</span>
                   ) : (
-                    <span className="pill danger" style={{fontSize: 10.5}}><span className="dot danger" /> 已拦截</span>
+                    <span className="pill danger" style={{fontSize: 10.5}}><span className="dot danger" /> {t('platform.me.settings.login_blocked', '已拦截')}</span>
                   )}
                 </li>
               ))}
@@ -2149,21 +2158,21 @@ function MeUserSettings() {
       {policyOpen && (
         <Modal
           open
-          eyebrow="隐私政策摘要"
-          title="我们如何处理你的数据"
+          eyebrow={t('platform.me.settings.policy_eyebrow', '隐私政策摘要')}
+          title={t('platform.me.settings.policy_title', '我们如何处理你的数据')}
           width={680}
           onClose={() => setPolicyOpen(false)}
           footer={<>
-            <a className="muted" style={{fontSize: 12}} href="#" onClick={(e) => e.preventDefault()}>查看完整政策（外链）</a>
-            <button className="btn primary" onClick={() => setPolicyOpen(false)}>我已阅读</button>
+            <a className="muted" style={{fontSize: 12}} href="#" onClick={(e) => e.preventDefault()}>{t('platform.me.settings.policy_full_link', '查看完整政策（外链）')}</a>
+            <button className="btn primary" onClick={() => setPolicyOpen(false)}>{t('platform.me.settings.policy_read', '我已阅读')}</button>
           </>}
         >
             <div style={{fontSize: 13, lineHeight: 1.7, color: "var(--text-quiet)", maxHeight: 360, overflow: "auto"}}>
-              <p><strong>1. 我们收集什么</strong>：账号信息（用户名、邮箱、可选手机）、设备指纹（用于会话）、用量遥测（仅在你开启时）。</p>
-              <p><strong>2. 我们 不 收集什么</strong>：剧本正文、玩家变量、私聊、长期记忆、世界书条目——这些数据加密存储在你的工作区，团队 无 任何访问。</p>
-              <p><strong>3. 与第三方</strong>：不向第三方分享剧本内容。模型 API 调用按你配置直接发往对应厂商（OpenAI / Anthropic 等），团队 不 代理也 不 留存。</p>
-              <p><strong>4. 数据所有权</strong>：你可以随时通过『导出我的数据』申请完整归档；可随时『停用账号』（90 天保留）或『永久删除』（立刻执行）。</p>
-              <p><strong>5. 合规</strong>：本平台符合 GDPR · 中国《个人信息保护法》· 加州 CCPA。</p>
+              <p><strong>{t('platform.me.settings.policy_p1_title', '1. 我们收集什么')}</strong>：{t('platform.me.settings.policy_p1_body', '账号信息（用户名、邮箱、可选手机）、设备指纹（用于会话）、用量遥测（仅在你开启时）。')}</p>
+              <p><strong>{t('platform.me.settings.policy_p2_title', '2. 我们 不 收集什么')}</strong>：{t('platform.me.settings.policy_p2_body', '剧本正文、玩家变量、私聊、长期记忆、世界书条目——这些数据加密存储在你的工作区，团队 无 任何访问。')}</p>
+              <p><strong>{t('platform.me.settings.policy_p3_title', '3. 与第三方')}</strong>：{t('platform.me.settings.policy_p3_body', '不向第三方分享剧本内容。模型 API 调用按你配置直接发往对应厂商（OpenAI / Anthropic 等），团队 不 代理也 不 留存。')}</p>
+              <p><strong>{t('platform.me.settings.policy_p4_title', '4. 数据所有权')}</strong>：{t('platform.me.settings.policy_p4_body', '你可以随时通过『导出我的数据』申请完整归档；可随时『停用账号』（90 天保留）或『永久删除』（立刻执行）。')}</p>
+              <p><strong>{t('platform.me.settings.policy_p5_title', '5. 合规')}</strong>：{t('platform.me.settings.policy_p5_body', '本平台符合 GDPR · 中国《个人信息保护法》· 加州 CCPA。')}</p>
             </div>
         </Modal>
       )}
@@ -2189,6 +2198,7 @@ function SettingRow({ title, desc, control }) {
 
 /* ---------------------------- PROFILE -------------------------- */
 function ProfilePage() {
+  const { t } = useTranslation();
   const platform = usePlatformData();  // task 45：响应式 platform，登录后真实数据自动注入
   const { database = {}, stats = {}, scripts = [], saves = [], recent_assets = [] } = platform;
   const user = useReactiveUser();  // task 13: 保存资料后即时同步显示名/简介
@@ -2209,7 +2219,7 @@ function ProfilePage() {
   // 工作台首页:问候 + 快速操作。身份资料(名字/简介/角色)归「个人主页」,这里不再重复。
   const lastSave = realSaves[0] || null;
   const hour = (() => { try { return new Date().getHours(); } catch (_) { return 12; } })();
-  const greeting = hour < 5 ? "夜深了" : hour < 11 ? "早上好" : hour < 14 ? "中午好" : hour < 18 ? "下午好" : "晚上好";
+  const greeting = hour < 5 ? t('platform.profile.greeting_late', '夜深了') : hour < 11 ? t('platform.profile.greeting_morning', '早上好') : hour < 14 ? t('platform.profile.greeting_noon', '中午好') : hour < 18 ? t('platform.profile.greeting_afternoon', '下午好') : t('platform.profile.greeting_evening', '晚上好');
   const lastScript = lastSave ? realScripts.find(sc => sc && sc.id === lastSave.script_id) : null;
 
   // 没有游戏存档时,「最近游玩」空态显示一个酒馆风输入框:提交即新建酒馆对话并自动发出第一句。
@@ -2222,7 +2232,7 @@ function ProfilePage() {
     try {
       const r = await window.api.tavern.create({});
       const saveId = r && r.save && r.save.id;
-      if (!saveId) throw new Error(r?.error || r?.detail || "未返回对话 id");
+      if (!saveId) throw new Error(r?.error || r?.detail || t('platform.profile.tavern_no_id', '未返回对话 id'));
       // 把首句交给酒馆页:openChat 命中同一 save 时自动发送(失败兜底=预填到输入框)。
       try {
         sessionStorage.setItem('rpg_tavern_pending_first', JSON.stringify({ save_id: saveId, text: first }));
@@ -2230,7 +2240,7 @@ function ProfilePage() {
       setTavernText("");
       plNavigate('tavern');
     } catch (e) {
-      window.__apiToast?.('新建对话失败', { kind: 'danger', detail: e?.message });
+      window.__apiToast?.(t('platform.profile.tavern_create_failed', '新建对话失败'), { kind: 'danger', detail: e?.message });
     } finally {
       setTavernBusy(false);
     }
@@ -2244,48 +2254,48 @@ function ProfilePage() {
         border: "1px solid var(--line-soft,#2a2724)", borderRadius: 14, padding: "26px 28px",
       }}>
         <div style={{ fontSize: 13, color: "var(--accent,#c96442)", fontWeight: 600, letterSpacing: ".04em", marginBottom: 6 }}>
-          {greeting}，{user.display_name || "旅行者"}
+          {greeting}，{user.display_name || t('platform.profile.traveler', '旅行者')}
         </div>
         <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 23, fontWeight: 600, color: "var(--text,#ebe7df)", marginBottom: 6 }}>
-          继续你的故事，或开启新的旅程
+          {t('platform.profile.hero_tagline', '继续你的故事，或开启新的旅程')}
         </div>
         <div style={{ fontSize: 13.5, color: "var(--text-quiet,#a8a195)", marginBottom: 18, lineHeight: 1.6 }}>
           {realScripts.length === 0
-            ? "还没有剧本。先去「剧本」页导入一部长篇,平台会自动切章、提取世界书与 NPC 角色卡。"
+            ? t('platform.profile.no_scripts', '还没有剧本。先去「剧本」页导入一部长篇,平台会自动切章、提取世界书与 NPC 角色卡。')
             : (realSaves.length === 0
-                ? `已导入 ${realScripts.length} 部剧本。挑一本开启你的第一个存档吧。`
-                : `你有 ${realSaves.length} 个存档、${realScripts.length} 部剧本在等你。`)}
+                ? t('platform.profile.no_saves', { n: realScripts.length, defaultValue: `已导入 ${realScripts.length} 部剧本。挑一本开启你的第一个存档吧。` })
+                : t('platform.profile.has_saves', { saves: realSaves.length, scripts: realScripts.length, defaultValue: `你有 ${realSaves.length} 个存档、${realScripts.length} 部剧本在等你。` }))}
         </div>
         <CSSpaceBetween direction="horizontal" size="xs">
           {lastSave ? (
             <CSButton variant="primary" iconName="caret-right-filled" onClick={() => window.__openContinue?.(lastSave)}>
-              继续《{lastSave.title || lastScript?.title || "上次存档"}》
+              {t('platform.profile.continue_save', { title: lastSave.title || lastScript?.title || t('platform.profile.last_save', '上次存档'), defaultValue: `继续《${lastSave.title || lastScript?.title || '上次存档'}》` })}
             </CSButton>
           ) : (
-            <CSButton variant="primary" iconName="add-plus" onClick={() => plNavigate('scripts')}>浏览剧本</CSButton>
+            <CSButton variant="primary" iconName="add-plus" onClick={() => plNavigate('scripts')}>{t('platform.profile.browse_scripts', '浏览剧本')}</CSButton>
           )}
-          <CSButton iconName="folder" onClick={() => plNavigate('scripts')}>剧本库</CSButton>
-          <CSButton iconName="user-profile" onClick={() => plNavigate('cards')}>用户角色卡</CSButton>
-          <CSButton iconName="settings" onClick={() => plNavigate('settings')}>设置</CSButton>
+          <CSButton iconName="folder" onClick={() => plNavigate('scripts')}>{t('platform.profile.script_library', '剧本库')}</CSButton>
+          <CSButton iconName="user-profile" onClick={() => plNavigate('cards')}>{t('platform.profile.user_cards', '用户角色卡')}</CSButton>
+          <CSButton iconName="settings" onClick={() => plNavigate('settings')}>{t('common.settings', '设置')}</CSButton>
         </CSSpaceBetween>
       </div>
 
       {/* 最近游玩 */}
       <CSContainer header={
-        <CSHeader variant="h2" actions={<CSButton onClick={() => plNavigate('saves')} iconName="caret-right-filled">全部存档</CSButton>}>
-          最近游玩 <span className="muted-2" style={{fontWeight: "normal"}}>按上次操作时间</span>
+        <CSHeader variant="h2" actions={<CSButton onClick={() => plNavigate('saves')} iconName="caret-right-filled">{t('platform.profile.all_saves', '全部存档')}</CSButton>}>
+          {t('platform.profile.recent_play', '最近游玩')} <span className="muted-2" style={{fontWeight: "normal"}}>{t('platform.profile.recent_play_sub', '按上次操作时间')}</span>
         </CSHeader>
       }>
         {realSaves.length === 0 ? (
           <CSSpaceBetween size="s">
             <CSBox color="text-body-secondary" fontSize="body-s">
-              还没有存档?直接说一句话,马上开始一段酒馆对话。
+              {t('platform.profile.no_saves_hint', '还没有存档?直接说一句话,马上开始一段酒馆对话。')}
             </CSBox>
             <Composer
               text={tavernText} setText={setTavernText}
               onSend={onTavernSend} onStop={() => {}} running={tavernBusy}
               composerMode="writing"
-              placeholder="想和谁聊聊?输入第一句话,直接开始一段对话…"
+              placeholder={t('platform.profile.tavern_placeholder', '想和谁聊聊?输入第一句话,直接开始一段对话…')}
               hideSlash hidePermission hideContinue hideAttach hideImageGen
               showSlash={false} showPlus={false} showModel={false} showPerm={false}
               toggleSlash={() => {}} togglePlus={() => {}} toggleModel={() => {}} togglePerm={() => {}}
@@ -2297,12 +2307,12 @@ function ProfilePage() {
             columnDefinitions={[
               {
                 id: "title",
-                header: "剧本 / 存档",
+                header: t('platform.profile.col_script_save', '剧本 / 存档'),
                 cell: s => {
                   const script = realScripts.find(sc => sc && sc.id === s.script_id);
                   return (
                     <div className="pl-title-cell">
-                      <strong>{s.title || `存档 #${s.id}`}</strong>
+                      <strong>{s.title || t('platform.profile.save_fallback', { id: s.id, defaultValue: `存档 #${s.id}` })}</strong>
                       <span className="muted-2 mono">{script?.title || "—"}</span>
                     </div>
                   );
@@ -2310,15 +2320,15 @@ function ProfilePage() {
               },
               {
                 id: "progress",
-                header: "进度",
-                cell: s => <span className="mono">{Number(s.branch_count) || 0} 分支节点</span>,
+                header: t('platform.profile.col_progress', '进度'),
+                cell: s => <span className="mono">{t('platform.profile.branch_nodes', { n: Number(s.branch_count) || 0, defaultValue: `${Number(s.branch_count) || 0} 分支节点` })}</span>,
               },
               {
                 id: "last",
-                header: "上次游玩",
+                header: t('platform.profile.col_last_play', '上次游玩'),
                 cell: s => (
                   <span className="muted">
-                    {s.current && <span className="pill accent" style={{marginRight: 6}}><span className="dot accent pulse" /> 在玩</span>}
+                    {s.current && <span className="pill accent" style={{marginRight: 6}}><span className="dot accent pulse" /> {t('platform.profile.playing', '在玩')}</span>}
                     {s.updated_at || "—"}
                   </span>
                 ),
@@ -2329,14 +2339,14 @@ function ProfilePage() {
                 cell: s => (
                   <CSButton variant="primary" iconName="caret-right-filled"
                     onClick={() => window.__openContinue?.(s)}>
-                    继续
+                    {t('platform.profile.continue_btn', '继续')}
                   </CSButton>
                 ),
               },
             ]}
             items={realSaves}
             trackBy="id"
-            empty={<CSBox color="text-body-secondary" textAlign="center">暂无存档</CSBox>}
+            empty={<CSBox color="text-body-secondary" textAlign="center">{t('platform.profile.no_saves_empty', '暂无存档')}</CSBox>}
           />
         )}
       </CSContainer>
