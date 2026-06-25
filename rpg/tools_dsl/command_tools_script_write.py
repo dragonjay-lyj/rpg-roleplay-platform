@@ -1050,6 +1050,185 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# 6) 新建 / 删除 缺口工具(create_script_chapter / create_npc_card /
+#    delete_worldbook_entry / delete_anchor)—— 与 update_* 互补,补齐编辑器 agent 的增删能力。
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _t_create_script_chapter(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
+    """在剧本末尾「新增」一章(title 必填,content 可选)。续写新章时用。
+    要改已有章用 update_script_chapter(先 get_script_chapters 看现有章号)。"""
+    sid = _resolve_sid(script_id, args)
+    if sid is None:
+        return "失败: script_id 必填"
+    title = str(args.get("title") or "").strip()
+    if not title:
+        return "失败: title 必填(新章标题)"
+    content = str(args.get("content") or "")
+    try:
+        from platform_app.db import connect, init_db
+        from platform_app.perms import script_owned
+        init_db()
+        with connect() as db:
+            if not script_owned(db, sid, user_id):
+                return "失败(权限): 剧本不属于当前用户"
+            mx = db.execute(
+                "select coalesce(max(chapter_index),0) as m from script_chapters where script_id=%s",
+                (sid,),
+            ).fetchone()
+            ci = int(mx["m"]) + 1
+            db.execute(
+                "insert into script_chapters(script_id, chapter_index, title, content, word_count, "
+                "volume_title, source_marker, confidence) values (%s,%s,%s,%s,%s,%s,'manual',1.0)",
+                (sid, ci, title[:200], content, len(content), str(args.get("volume_title") or "")),
+            )
+            db.execute(
+                "update scripts set chapter_count=(select count(*) from script_chapters where script_id=%s),"
+                " updated_at=now() where id=%s", (sid, sid),
+            )
+            try:
+                from platform_app.api.script_edit import _write_commit
+                _write_commit(db, script_id=sid, user_id=user_id, kind="chapter_add",
+                              message=f"新增章节 #{ci}「{title[:40]}」",
+                              payload={"table": "script_chapters", "op": "add",
+                                       "ids": {"chapter_index": ci}})
+            except Exception:
+                pass
+            db.commit()
+        return f"已新建章节 #{ci}「{title}」(剧本 #{sid},{len(content)} 字)"
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
+
+
+def _t_create_npc_card(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
+    """为剧本「新建」一张 NPC 角色卡(name 必填)。可基于别的剧本/正文情节创建新角色。
+    要改已有卡用 update_npc_card(先 list_script_npcs 拿 id)。"""
+    sid = _resolve_sid(script_id, args)
+    if sid is None:
+        return "失败: script_id 必填"
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return "失败: name 必填(角色名)"
+    try:
+        from platform_app.db import connect, init_db
+        from platform_app.perms import script_owned
+        init_db()
+        with connect() as db:
+            if not script_owned(db, sid, user_id):
+                return "失败(权限): 剧本不属于当前用户"
+            dup = db.execute(
+                "select id from character_cards where script_id=%s and card_type='npc' and name=%s limit 1",
+                (sid, name),
+            ).fetchone()
+            if dup:
+                return (f"失败: 剧本 #{sid} 已有同名 NPC「{name}」(#{dup['id']})。"
+                        "要改它用 update_npc_card,不要重复新建。")
+        payload: dict[str, Any] = {"name": name}
+        for k in ("full_name", "aliases", "identity", "appearance", "personality",
+                  "speech_style", "current_status", "secrets", "background",
+                  "sample_dialogue", "importance", "first_revealed_chapter"):
+            if k in args and args[k] is not None:
+                payload[k] = args[k]
+        if isinstance(args.get("tags"), list):
+            payload["metadata"] = {"tags": _strlist(args["tags"])}
+        from platform_app.knowledge.character_cards import upsert_character_card
+        row = upsert_character_card(user_id, sid, payload)
+        cid = int(row["id"]) if isinstance(row, dict) and row.get("id") else None
+        try:
+            from platform_app.api.script_edit import _write_commit
+            with connect() as adb:
+                if script_owned(adb, sid, user_id):
+                    _write_commit(adb, script_id=sid, user_id=user_id, kind="card_add",
+                                  message=f"新增 NPC 角色卡「{name}」",
+                                  payload={"table": "character_cards", "op": "add",
+                                           "ids": {"card_id": cid}})
+                    adb.commit()
+        except Exception:
+            pass
+        return f"已新建 NPC 角色卡「{name}」(#{cid},剧本 #{sid})" if cid else \
+            f"已新建 NPC 角色卡「{name}」(剧本 #{sid})"
+    except ValueError as exc:
+        return f"失败: {exc}"
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
+
+
+def _t_delete_worldbook_entry(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
+    """删除一条世界书条目(entry_id 必填,先 list_worldbook_entries 拿 id)。不可逆,删前向用户确认。"""
+    sid = _resolve_sid(script_id, args)
+    if sid is None:
+        return "失败: script_id 必填"
+    try:
+        eid = int(args.get("entry_id"))
+    except (TypeError, ValueError):
+        return "失败: entry_id 必填且为整数(先 list_worldbook_entries 拿 id)"
+    try:
+        from platform_app.db import connect, init_db
+        from platform_app.perms import script_owned
+        init_db()
+        with connect() as db:
+            if not script_owned(db, sid, user_id):
+                return "失败(权限): 剧本不属于当前用户"
+            row = db.execute(
+                "select title from worldbook_entries where id=%s and script_id=%s", (eid, sid),
+            ).fetchone()
+            if not row:
+                return f"失败: 世界书条目 #{eid} 不存在或不属于剧本 #{sid}"
+            db.execute("delete from worldbook_entries where id=%s and script_id=%s", (eid, sid))
+            try:
+                from platform_app.api.script_edit import _write_commit
+                _write_commit(db, script_id=sid, user_id=user_id, kind="worldbook_delete",
+                              message=f"删除世界书条目 #{eid}「{row['title']}」",
+                              payload={"table": "worldbook_entries", "op": "delete",
+                                       "ids": {"entry_id": eid}})
+            except Exception:
+                pass
+            db.commit()
+        return f"已删除世界书条目 #{eid}「{row['title']}」(剧本 #{sid})"
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
+
+
+def _t_delete_anchor(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
+    """删除一个时间线锚点(anchor_id 必填,先 list_anchors 拿 id)。不可逆,删前向用户确认。
+    注意:若它是原著骨架(source=novel),时间线重建可能会再生成;作者新增的(source=editor)删了不再生。"""
+    sid = _resolve_sid(script_id, args)
+    if sid is None:
+        return "失败: script_id 必填"
+    try:
+        aid = int(args.get("anchor_id"))
+    except (TypeError, ValueError):
+        return "失败: anchor_id 必填且为整数(先 list_anchors 拿 id)"
+    try:
+        from platform_app.db import connect, init_db
+        from platform_app.perms import script_owned
+        init_db()
+        with connect() as db:
+            if not script_owned(db, sid, user_id):
+                return "失败(权限): 剧本不属于当前用户"
+            row = db.execute(
+                "select story_time_label, source from script_timeline_anchors where id=%s and script_id=%s",
+                (aid, sid),
+            ).fetchone()
+            if not row:
+                return f"失败: 锚点 #{aid} 不存在或不属于剧本 #{sid}"
+            db.execute("delete from script_timeline_anchors where id=%s and script_id=%s", (aid, sid))
+            try:
+                from platform_app.api.script_edit import _write_commit
+                _write_commit(db, script_id=sid, user_id=user_id, kind="anchor_delete",
+                              message=f"删除锚点 #{aid}「{row['story_time_label']}」",
+                              payload={"table": "script_timeline_anchors", "op": "delete",
+                                       "ids": {"anchor_id": aid}})
+            except Exception:
+                pass
+            db.commit()
+        _note = "(原著骨架,重建可能再生成)" if str(row.get("source") or "") == "novel" else "(作者新增,删了不再生)"
+        return f"已删除时间线锚点 #{aid}「{row['story_time_label']}」(剧本 #{sid}){_note}"
+    except Exception as exc:
+        return f"失败: {type(exc).__name__}: {exc}"
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # 注册
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -1238,6 +1417,89 @@ def register_script_write_tools() -> None:
             scope="script",
             origins=_SCRIPT_WRITE_ORIGINS,
             destructive=False,
+        ),
+        ToolSpec(
+            name="create_script_chapter",
+            description=(
+                "在剧本【末尾】新增一章。title 必填,content 可选(新章正文,可留空之后再写)。"
+                "续写出全新一章时用。要改已有章用 update_script_chapter。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "新章标题"},
+                    "content": {"type": "string", "description": "新章正文(可空)"},
+                    "volume_title": {"type": "string", "description": "所属卷名(可空)"},
+                },
+                "required": ["title"],
+            },
+            executor=_t_create_script_chapter,
+            scope="script",
+            origins=_SCRIPT_WRITE_ORIGINS,
+            destructive=False,
+        ),
+        ToolSpec(
+            name="create_npc_card",
+            description=(
+                "为剧本【新建】一张 NPC 角色卡。name 必填,其余字段(identity/appearance/personality/"
+                "background/aliases/importance/first_revealed_chapter 等)可选。可结合别的剧本或正文情节"
+                "创建新角色。要改已有卡用 update_npc_card(先 list_script_npcs)。同名会被拒(改用 update)。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "角色名(必填)"},
+                    "full_name": {"type": "string"},
+                    "aliases": {"type": "array", "items": {"type": "string"}},
+                    "identity": {"type": "string"},
+                    "appearance": {"type": "string"},
+                    "personality": {"type": "string"},
+                    "speech_style": {"type": "string"},
+                    "current_status": {"type": "string"},
+                    "secrets": {"type": "string"},
+                    "background": {"type": "string"},
+                    "sample_dialogue": {"type": "array"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "importance": {"type": "integer"},
+                    "first_revealed_chapter": {"type": "integer"},
+                },
+                "required": ["name"],
+            },
+            executor=_t_create_npc_card,
+            scope="script",
+            origins=_SCRIPT_WRITE_ORIGINS,
+            destructive=False,
+        ),
+        ToolSpec(
+            name="delete_worldbook_entry",
+            description=(
+                "删除一条世界书条目。entry_id 必填(先 list_worldbook_entries 拿 id)。不可逆,删前向用户确认。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"entry_id": {"type": "integer"}},
+                "required": ["entry_id"],
+            },
+            executor=_t_delete_worldbook_entry,
+            scope="script",
+            origins=_SCRIPT_WRITE_ORIGINS,
+            destructive=True,
+        ),
+        ToolSpec(
+            name="delete_anchor",
+            description=(
+                "删除一个时间线锚点。anchor_id 必填(先 list_anchors 拿 id)。不可逆,删前向用户确认。"
+                "原著骨架锚点(source=novel)删后时间线重建可能再生成。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"anchor_id": {"type": "integer"}},
+                "required": ["anchor_id"],
+            },
+            executor=_t_delete_anchor,
+            scope="script",
+            origins=_SCRIPT_WRITE_ORIGINS,
+            destructive=True,
         ),
         ToolSpec(
             name="get_chapter_text",

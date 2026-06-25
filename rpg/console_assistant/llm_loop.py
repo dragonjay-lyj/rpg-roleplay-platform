@@ -149,6 +149,7 @@ def _to_backend_messages(messages: list[dict[str, Any]]) -> list[dict]:
 _SCRIPT_WRITE_TOOLS = frozenset({
     "update_script_chapter", "upsert_worldbook_entry", "upsert_worldbook_entries", "update_npc_card",
     "update_anchor", "create_anchor", "upsert_canon_entity",
+    "create_script_chapter", "create_npc_card", "delete_worldbook_entry", "delete_anchor",
 })
 _SCRIPT_READ_TOOLS = frozenset({
     "get_script_chapters", "list_script_npcs", "get_script_character_card",
