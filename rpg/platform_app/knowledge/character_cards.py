@@ -84,10 +84,10 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
         # task: P0 修复 — character_card upsert 是 WRITE,必须 owner-only。
         # 订阅者(user_script_subscriptions)即使能读也不能改原作者剧本的 NPC 卡。
         _require_script_owner(db, user_id, script_id)
+        # book_id 是遗留可空列(归属看 script_id);有 books 行就带,没有就 NULL ——
+        # 空白/未同步剧本也能直接建 NPC 卡,不再强制先 knowledge/sync。
         book = db.execute("select id from books where script_id = %s", (script_id,)).fetchone()
-        if not book:
-            raise ValueError("剧本 book 未初始化，先调一次 /api/scripts/{id}/knowledge/sync")
-        book_id = int(book["id"])
+        book_id = int(book["id"]) if book else None
         if card_id:
             owned = db.execute(
                 "select 1 from character_cards where id = %s and script_id = %s and card_type='npc'",
