@@ -2068,6 +2068,17 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         end $$;
         """,
     ]),
+    (84, "console_conversations", [
+        # 侧栏 agent 对话长期持久化:此前只在 Redis 存 6h,超时/Redis 重置就丢(用户:编辑器刷新没了)。
+        # 落 PG 永久保留(Redis 仍作热缓存)。conv 整体存 jsonb(messages + pending + 元数据)。
+        "create table if not exists console_conversations ("
+        " user_id bigint not null references users(id) on delete cascade,"
+        " conversation_id text not null,"
+        " conv jsonb not null default '{}'::jsonb,"
+        " updated_at timestamptz not null default now(),"
+        " primary key (user_id, conversation_id))",
+        "create index if not exists idx_console_conv_user_updated on console_conversations(user_id, updated_at desc)",
+    ]),
 ]
 
 

@@ -34,6 +34,8 @@ def persist_conversation(user_id: int, cid: str, conv: dict[str, Any]) -> None:
                   _json.dumps(conv, ensure_ascii=False, default=str))
     except Exception:
         pass
+    # Redis 是 6h 热缓存;再落 PG 永久保留(刷新/超时/重启/换 worker 都能还原)。
+    _persist_conv_pg(user_id, cid, conv)
 
 
 def _load_conv_redis(user_id: int, cid: str) -> dict[str, Any] | None:
@@ -52,6 +54,45 @@ def _load_conv_redis(user_id: int, cid: str) -> dict[str, Any] | None:
         if isinstance(raw, (bytes, bytearray)):
             raw = raw.decode("utf-8")
         conv = _json.loads(raw)
+        return conv if isinstance(conv, dict) else None
+    except Exception:
+        return None
+
+
+# ── PG 永久持久化(Redis 6h 之外):对话落 console_conversations,刷新/超时/重启都还原 ──
+def _persist_conv_pg(user_id: int, cid: str, conv: dict[str, Any]) -> None:
+    if not (user_id and cid and isinstance(conv, dict)):
+        return
+    try:
+        from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            db.execute(
+                "insert into console_conversations(user_id, conversation_id, conv, updated_at)"
+                " values (%s,%s,%s, now())"
+                " on conflict (user_id, conversation_id) do update set conv=excluded.conv, updated_at=now()",
+                (int(user_id), cid, Jsonb(conv)),
+            )
+            if hasattr(db, "commit"):
+                db.commit()
+    except Exception:
+        pass
+
+
+def _load_conv_pg(user_id: int, cid: str) -> dict[str, Any] | None:
+    if not (user_id and cid):
+        return None
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            r = db.execute(
+                "select conv from console_conversations where user_id=%s and conversation_id=%s",
+                (int(user_id), cid),
+            ).fetchone()
+        conv = (r or {}).get("conv") if r else None
         return conv if isinstance(conv, dict) else None
     except Exception:
         return None
@@ -130,10 +171,12 @@ def _get_or_create_conversation(
             conv = user_bucket[conversation_id]
             conv["last_used"] = _now_iso()
             return conversation_id, conv
-        # 本进程无此对话 → 试从 Redis 拉(多 worker:别的 worker 建的对话续聊)
+        # 本进程无此对话 → 试从 Redis 拉(多 worker:别的 worker 建的对话续聊),Redis 未命中
+        # (超 6h / 重置)再从 PG 拉(永久持久化)。
         if conversation_id:
-            loaded = _load_conv_redis(user_id, conversation_id)
+            loaded = _load_conv_redis(user_id, conversation_id) or _load_conv_pg(user_id, conversation_id)
             if loaded is not None:
+                loaded.setdefault("pending_confirmations", {})
                 loaded["last_used"] = _now_iso()
                 user_bucket[conversation_id] = loaded
                 return conversation_id, loaded
@@ -206,7 +249,19 @@ def delete_conversation(user_id: int, conversation_id: str) -> bool:
                 redis_hit = bool(cli.delete(_conv_redis_key(user_id, conversation_id)))
     except Exception:
         pass
-    return local or redis_hit
+    pg_hit = False
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            cur = db.execute("delete from console_conversations where user_id=%s and conversation_id=%s",
+                             (int(user_id), conversation_id))
+            pg_hit = bool(getattr(cur, "rowcount", 0))
+            if hasattr(db, "commit"):
+                db.commit()
+    except Exception:
+        pass
+    return local or redis_hit or pg_hit
 
 
 def _test_only_get_conversation_state(user_id: int) -> dict[str, dict[str, Any]]:
