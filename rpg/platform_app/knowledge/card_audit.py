@@ -146,10 +146,15 @@ def audit_character_cards(user_id: int, script_id: int, api_id: str = "", model:
                 credential_api_id=import_pipeline._credential_api_id_for(api_id))
 
     from agents._harness import call_agent_json
+    # 限额随卡数自适应:大花名册(几百张)的 prompt 很大、verdict JSON(多组 merges + non_person_ids)
+    # 也长 —— 固定 60s/1500tok 会 read-timeout 或截断 JSON 解析失败。按卡数线性放大并封顶。
+    n = len(cards)
+    _timeout = min(240, max(60, n // 3 + 40))      # 419 卡 ≈ 180s
+    _max_tokens = min(8000, max(1500, n * 12))     # 419 卡 ≈ 5000tok
     text, _usage = call_agent_json(
         api_id, model, _AUDIT_SYSTEM, _build_user_prompt(title, cards), user_id,
-        max_tokens=1500, timeout_sec=60, agent_kind="card_audit",
-        metadata_extra={"script_id": script_id, "cards": len(cards)},
+        max_tokens=_max_tokens, timeout_sec=_timeout, agent_kind="card_audit",
+        metadata_extra={"script_id": script_id, "cards": n},
     )
     verdict = _parse_json_obj(text)
     if not verdict:
