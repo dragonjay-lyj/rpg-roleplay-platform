@@ -29,6 +29,11 @@ const TOOL_LABELS = {
 };
 function toolLabel(name) { return TOOL_LABELS[name] || name; }
 
+// 用户铁律:前端禁止出现 emoji。SSE 流 / 历史里模型吐的 emoji 一律【确定性】剥除,不靠模型自觉。
+// 剥除常见 emoji / 符号区(图形符号、Dingbats ✓✗⚠★、杂项符号、变体选择子、ZWJ);保留箭头 → 等文本标点。
+const _EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu;
+function stripEmoji(s) { return typeof s === 'string' ? s.replace(_EMOJI_RE, '') : s; }
+
 // 编辑器写权限只支持 3 档(后端 console_assistant 认 read_only/review/full_access,无 'default')。
 // 限制 PermissionPopover 只显示这三档,避免用户点「默认权限」却被静默映射成「审查」造成的高亮跳变。
 const EDITOR_PERMS = ['read_only', 'review', 'full_access'];
@@ -570,8 +575,8 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
               )
             ))}
             {m.text && (m.role === 'assistant'
-              ? <div className="mde-agent-text"><RpgMarkdown.Block text={m.text} streaming={busy && i === messages.length - 1} /></div>
-              : <div className="mde-agent-text">{m.text}</div>)}
+              ? <div className="mde-agent-text"><RpgMarkdown.Block text={stripEmoji(m.text)} streaming={busy && i === messages.length - 1} /></div>
+              : <div className="mde-agent-text">{stripEmoji(m.text)}</div>)}
             {m.pendingConfirm && (
               <div className="mde-agent-confirm">
                 <div className="mde-agent-confirm-q">
