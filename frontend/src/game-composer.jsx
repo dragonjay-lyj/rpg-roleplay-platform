@@ -464,7 +464,7 @@ function AttachMenu({ onPick, onClose, triggerRef, onAiReply, aiReplyOnly = fals
    全部委托给全站唯一规范组件 AgentModelPicker(variant="popover")。本组件只保留游戏台
    专属的浮层外壳:向上展开定位、点外/Esc 关闭、存档级 saveId、底部 EffortSection。
    AgentModelPicker.onChange(api_id, model) 回填本地选中态,供 EffortSection + onPick 用。 */
-function ModelPopover({ current, onPick, align = "left", gameState, onClose, triggerRef }) {
+function ModelPopover({ current, onPick, align = "left", gameState, onClose, triggerRef, persist = null }) {
   const { t } = useTranslation();
   // A1: 取当前存档 id（从 /api/state 的 gameState.save_id）用于存档级模型切换
   const saveId = (gameState && gameState.save_id != null)
@@ -521,9 +521,12 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
       {/* 统一规范组件:模型池 = 已配 key 的 provider 真实模型;health/价格;选中即 /api/models/select。
           persistShape="models_select" + saveId → 有存档时存档级切换,否则改全局 gm 偏好。 */}
       <AgentModelPicker
-        prefPrefix="gm"
-        persistShape="models_select"
-        saveId={saveId}
+        prefPrefix={persist?.prefPrefix || "gm"}
+        persistShape={persist?.persistShape || "models_select"}
+        dictKey={persist?.dictKey || null}
+        allowInherit={persist?.allowInherit || false}
+        inheritLabel={persist?.inheritLabel || null}
+        saveId={persist ? null : saveId}
         variant="popover"
         showHealth
         showPricing
@@ -719,6 +722,10 @@ function Composer({
   onSendRaw,   // task 130: 一键继续 — 直接发任意文本不经过 textarea
   permission, setPermission,
   model, setModel,
+  // 复用方自定义模型选择的落库目标。默认 null = 全局 gm / 存档级(游戏·酒馆不变)。剧本编辑器传
+  // {persistShape:'dict', dictKey:'console_assistant_model_override'} → 切模型只改编辑器 agent 模型,
+  // 不污染游戏 GM 模型。
+  modelPersist = null,
   composerMode,
   suggestions,
   attachments,
@@ -1029,7 +1036,7 @@ function Composer({
           <MentionMenu chars={filteredChars} query={mention.query} onPick={insertMention} onClose={() => setMention(null)} />
         )}
         {showPlus && <AttachMenu onPick={onAttachPick} onClose={togglePlus} triggerRef={plusTriggerRef} onAiReply={onAiReply} aiReplyOnly={aiReplyOnly} />}
-        {showModel && <ModelPopover current={model} onPick={(id) => { setModel(id); toggleModel(); }} align="right" gameState={gameState} onClose={toggleModel} triggerRef={modelTriggerRef} />}
+        {showModel && <ModelPopover current={model} onPick={(id) => { setModel(id); toggleModel(); }} align="right" gameState={gameState} onClose={toggleModel} triggerRef={modelTriggerRef} persist={modelPersist} />}
         {showPerm && <PermissionPopover current={permission} optionIds={permissionOptions} onPick={(id) => { setPermission(id); togglePerm(); }} onClose={togglePerm} triggerRef={permTriggerRef} />}
         {showImageGen && (
           <GenerateImageModal

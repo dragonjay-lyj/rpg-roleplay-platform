@@ -5,7 +5,12 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Composer } from '../game-composer.jsx';
 import { RpgMarkdown } from '../markdown-render.jsx';
-import AgentModelPicker from './AgentModelPicker.jsx';
+
+// 编辑器 agent 模型选择落库目标:复用游戏/酒馆同一个 Composer 内置模型选择器,但写到 console_assistant
+// 专属偏好(不污染游戏 GM 模型)。后端 console_assistant 解析优先读此键(app.py)。
+const EDITOR_MODEL_PERSIST = {
+  persistShape: 'dict', dictKey: 'console_assistant_model_override', allowInherit: true,
+};
 
 const { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } = React;
 
@@ -192,6 +197,11 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   // 复用游戏聊天框 Composer 所需的浮层开关(只用权限/写模式浮层;模型/上下文环/斜杠/附件/生图在右栏全隐藏)。
   const [showPerm, setShowPerm] = useState(false);
   const togglePerm = useCallback(() => setShowPerm((v) => !v), []);
+  // 内联切模型:复用 Composer 内置模型选择器(与游戏/酒馆同一个),model 仅作底部标签(真正落库由
+  // Composer 内的 AgentModelPicker 写 console_assistant_model_override)。
+  const [model, setModel] = useState('');
+  const [showModel, setShowModel] = useState(false);
+  const toggleModel = useCallback(() => setShowModel((v) => !v), []);
   // 拖入文档(txt/md):上传到 /agent-doc 暂存 → 拿 doc_id,下条消息带上让 agent 用确定性拆章工具处理。
   const [attached, setAttached] = useState(null);   // {doc_id, filename, chars}
   const [dragOver, setDragOver] = useState(false);
@@ -247,6 +257,8 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         const prefs = p?.preferences || p?.profile?.preferences || {};
         const m = prefs['editor.write_mode'];
         if (m) setWriteMode(m);
+        const ov = prefs['console_assistant_model_override'];
+        if (ov && ov.model) setModel(ov.model);   // 底部标签显示当前编辑器 agent 模型
       } catch (_) { /* 默认 review */ }
     })();
   }, []);
@@ -615,19 +627,6 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
           )}
         </div>
       )}
-      {scriptId && (
-        <div className="mde-agent-modelbar">
-          <span className="mde-agent-modelbar-label">{t('components.md_editor_agent.model_label', { defaultValue: '模型' })}</span>
-          <AgentModelPicker
-            variant="popover"
-            persistShape="dict"
-            dictKey="console_assistant_model_override"
-            allowInherit
-            inheritLabel={t('components.md_editor_agent.model_inherit', { defaultValue: '跟随默认模型' })}
-            configHash="settings-models"
-          />
-        </div>
-      )}
       <div className="mde-agent-composer">
         <Composer
           text={input}
@@ -642,11 +641,15 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
           permissionOptions={EDITOR_PERMS}
           enterToSendKey="rpg.editor.enterToSend"
           gameState={null}
+          model={model}
+          setModel={setModel}
+          showModel={showModel}
+          toggleModel={toggleModel}
+          modelPersist={EDITOR_MODEL_PERSIST}
           hideSlash
           hideAttach
           hideContinue
           hideImageGen
-          hideModel
           hideContextUsage
           placeholder={scriptId ? t('components.md_editor_agent.placeholder_with_script') : t('components.md_editor_agent.placeholder_no_script')}
         />
