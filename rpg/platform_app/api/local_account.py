@@ -91,3 +91,43 @@ async def mint_magic_token(request: Request):
     token = _auth.create_desktop_login_token(int(acct["id"]))
     return json_response({"ok": True, "token": token,
                           "path": f"/api/auth/desktop-login?token={token}"})
+
+
+# ── 邀请链接:控制台(回环)铸/撤销可复用邀请 token;局域网内的人凭它轻量注册自己的账号 ──
+@router.post("/api/local/account/invite-token")
+async def mint_invite_token(request: Request):
+    """铸一枚可复用邀请 token(本机回环)。浏览器打开 /Login.html?invite= 走轻量注册。"""
+    _require_local(request, loopback=True)
+    acct = _auth.bootstrap_local_account()
+    token = _auth.create_desktop_invite_token(int(acct["id"]))
+    return json_response({"ok": True, "token": token,
+                          "path": f"/Login.html?invite={token}"})
+
+
+@router.post("/api/local/account/invite-token/revoke")
+async def revoke_invite_tokens(request: Request):
+    """撤销全部邀请 token(停止邀请;本机回环)。"""
+    _require_local(request, loopback=True)
+    _auth.revoke_desktop_invite_tokens()
+    return json_response({"ok": True})
+
+
+@router.post("/api/local/register")
+async def register_via_invite(request: Request):
+    """局域网设备凭邀请 token 轻量注册(用户名+密码,无邮箱)→ 注册即登录(set cookie)。
+    本地/自部署模式可用;**不要求回环**(就是给 LAN 设备用的)。token 无效/弱密码/重名 → 400。"""
+    _require_local(request)  # 仅本地部署;LAN 设备(非回环)可访问
+    body = await request.json()
+    try:
+        user, session_token = _auth.register_via_invite(
+            (body.get("invite") or "").strip(),
+            (body.get("username") or "").strip(),
+            body.get("password") or "",
+            display_name=(body.get("display_name") or "").strip(),
+            age_confirmed=bool(body.get("age_confirmed")),
+        )
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+    resp = json_response({"ok": True, "user": public_user(user), "next": "/Platform.html"})
+    _set_session_cookie(resp, request, session_token)
+    return resp

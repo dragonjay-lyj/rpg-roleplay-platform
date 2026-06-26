@@ -1057,6 +1057,84 @@ def consume_desktop_login_token(token: str) -> tuple[dict[str, Any], str]:
     return dict(user), session_token
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 自部署「邀请链接」:控制台铸可复用邀请 token,局域网内的人开 /Login.html?invite= 轻量注册
+# (用户名+密码,无邮箱/验证码 —— 自部署没 SMTP,朋友也不必给邮箱;host 对自己 LAN 负责)。
+# ──────────────────────────────────────────────────────────────────────────────
+DESKTOP_INVITE_TTL_HOURS = 24 * 14  # 邀请链接默认 14 天有效、可复用(撤销/过期失效)
+
+
+def create_desktop_invite_token(creator_id: int) -> str:
+    """铸一枚可复用邀请 token(控制台回环调用)。返回明文,DB 只存哈希。"""
+    token = secrets.token_urlsafe(24)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=DESKTOP_INVITE_TTL_HOURS)
+    init_db()
+    with connect() as db:
+        db.execute(
+            "insert into desktop_invite_tokens(token_hash, created_by, expires_at) values (%s, %s, %s)",
+            (_hash_token(token), int(creator_id), expires_at),
+        )
+    return token
+
+
+def validate_desktop_invite_token(token: str) -> bool:
+    """邀请 token 是否有效(存在 + 未撤销 + 未过期)。"""
+    if not token:
+        return False
+    init_db()
+    with connect() as db:
+        row = db.execute(
+            "select 1 from desktop_invite_tokens "
+            "where token_hash = %s and revoked_at is null and expires_at > now()",
+            (_hash_token(token),),
+        ).fetchone()
+    return bool(row)
+
+
+def revoke_desktop_invite_tokens() -> None:
+    """撤销全部未撤销邀请 token(停止邀请)。"""
+    init_db()
+    with connect() as db:
+        db.execute("update desktop_invite_tokens set revoked_at = now() where revoked_at is null")
+
+
+def register_via_invite(
+    invite_token: str,
+    username: str,
+    password: str,
+    *,
+    display_name: str = "",
+    age_confirmed: bool = False,
+) -> tuple[dict[str, Any], str]:
+    """凭邀请 token 轻量注册一个普通用户(role=user,无邮箱)→ (user, session_token)。
+    单写者建号 + 即时发会话(注册即登录)。用户名唯一冲突 / 弱密码 / 无效邀请 → ValueError。"""
+    if not validate_desktop_invite_token(invite_token):
+        raise ValueError("邀请链接无效或已过期")
+    if not age_confirmed:
+        raise ValueError("请确认你已年满 18 岁")
+    username = normalize_username(username)
+    if not username:
+        raise ValueError("用户名不能为空")
+    if len(password or "") < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"密码至少 {MIN_PASSWORD_LENGTH} 位")
+    if len(password or "") > 1024:
+        raise ValueError("密码超长")
+    init_db()
+    pw_hash = hash_password(password)
+    with connect() as db:
+        try:
+            row = db.execute(
+                "insert into users(username, password_hash, display_name, role, "
+                "email, email_verified, age_confirmed, terms_accepted_at) "
+                "values (%s, %s, %s, 'user', '', false, true, now()) returning *",
+                (username, pw_hash, (display_name or "").strip() or username),
+            ).fetchone()
+        except UniqueViolation as exc:
+            raise ValueError("该用户名已被占用") from exc
+        session_token = _issue_session(db, int(row["id"]))
+    return dict(row), session_token
+
+
 def request_login_code(email: str, *, ip: str = "", ua: str = "") -> dict[str, Any]:
     """Send a one-time email code for passwordless login.
 
