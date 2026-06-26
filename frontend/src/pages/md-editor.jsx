@@ -1110,9 +1110,23 @@ export default function MdEditorPage() {
       if (!view || !a || a.kind !== 'chapter' || String(a.id) !== String(chapterIndex)) return false;
       if (newText == null) return false;
       const oldText = view.state.doc.toString();
-      return showChapterDiff(view, oldText, newText, cbs);
+      // 逐块取舍(混合):后端 approve 会写【整段 newText】→ 不能用 approve。改为 reject 掉 agent 提议,
+      // 再把编辑器里玩家逐块选定的实际文本经 owner 校验端点直接落库(云端隔离)。
+      const onMixed = async (finalText) => {
+        try { cbs.onReject?.(); } catch (_) {}
+        try {
+          await saveNodeContent('chapter', scriptId, chapterIndex, finalText, oldText);
+          const key = nodeKey('chapter', chapterIndex);
+          setTabs((cur) => cur.map((x) => x.key === key ? { ...x, content: finalText, original: finalText, dirty: false } : x));
+          setTreeReloadKey((x) => x + 1);
+          toast(t('md_editor.diff.mixed_saved', { defaultValue: '已按你的逐段取舍保存' }), { kind: 'ok', duration: 1600 });
+        } catch (e) {
+          toast(t('md_editor.toast.save_failed'), { kind: 'danger', detail: e?.message });
+        }
+      };
+      return showChapterDiff(view, oldText, newText, { ...cbs, onMixed });
     } catch (_) { return false; }
-  }, []);
+  }, [scriptId, t]);
 
   // 「同步设定」:把刚接受的正文丢给右栏 agent,按 rule 4 读现状 + 同步知识资产。
   const doSync = useCallback(() => {

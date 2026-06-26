@@ -4082,6 +4082,9 @@
       "empty": "No issues yet. After the AI does a read-through / consistency / foreshadow-payoff check, they'll be listed here.",
       "chapter": "Ch. {{n}} ↗",
       "dismiss": "Dismiss"
+    },
+    "diff": {
+      "mixed_saved": "Saved with your per-section choices"
     }
   },
   "tavern_page": {

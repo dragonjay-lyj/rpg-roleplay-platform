@@ -4082,6 +4082,9 @@
       "empty": "暂无审稿问题。让 AI 通读/查矛盾/查伏笔回收后会在这里列出。",
       "chapter": "第{{n}}章 ↗",
       "dismiss": "消除"
+    },
+    "diff": {
+      "mixed_saved": "已按你的逐段取舍保存"
     }
   },
   "tavern_page": {
