@@ -1,0 +1,16 @@
+/* Stellatrix 品牌主题 —— 赤陶强调色,贴 app 观感。Starlight 用 --sl-color-accent-* 变量。 */
+:root {
+  --sl-color-accent-low: #3a201a;
+  --sl-color-accent: #c96442;
+  --sl-color-accent-high: #f3c3b1;
+  --sl-color-text-accent: #e0815f;
+}
+/* 浅色模式下也用同一支赤陶,保持品牌一致 */
+:root[data-theme='light'] {
+  --sl-color-accent-low: #f6ddd3;
+  --sl-color-accent: #b9512f;
+  --sl-color-accent-high: #5a2417;
+}
+/* 站点标题略收紧字重,正文行高舒展一些 */
+.site-title { font-weight: 650; letter-spacing: 0.2px; }
+.sl-markdown-content { line-height: 1.75; }

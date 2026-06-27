@@ -424,7 +424,8 @@ def _build_csp(dev: bool) -> str:
         "font-src 'self' fonts.gstatic.com data:",
         "img-src 'self' data: https:",
         f"connect-src {connect_src} cloudflareinsights.com static.cloudflareinsights.com challenges.cloudflare.com",
-        "frame-src 'self' challenges.cloudflare.com",
+        # docs.stellatrix.icu:站内帮助抽屉以 iframe 打开开源文档站的 /embed/<slug>。
+        "frame-src 'self' challenges.cloudflare.com https://docs.stellatrix.icu",
         "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",

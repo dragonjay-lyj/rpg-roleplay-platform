@@ -1,0 +1,54 @@
+---
+// 嵌入视图:去文档站外壳,只渲染正文。app 内 HelpDrawer 以 iframe 打开
+// https://docs.stellatrix.icu/embed/<slug>,实现「原控件内打开、不跳页」。
+import { getCollection, render } from 'astro:content';
+
+export async function getStaticPaths() {
+  const docs = await getCollection('docs');
+  return docs
+    .filter((e) => e.id !== 'index')
+    .map((entry) => ({ params: { slug: entry.id }, props: { entry } }));
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+const title = entry.data.title ?? entry.id;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>{title}</title>
+    <link rel="stylesheet" href="/embed.css" />
+  </head>
+  <body>
+    <article class="embed-doc">
+      <h1>{title}</h1>
+      <Content />
+    </article>
+    <script is:inline>
+      (function () {
+        // 内部文档链接:留在 iframe 内跳 /embed/<slug>,并通知父抽屉同步标题。
+        document.addEventListener('click', function (e) {
+          var a = e.target && e.target.closest ? e.target.closest('a') : null;
+          if (!a) return;
+          var href = a.getAttribute('href') || '';
+          if (href.charAt(0) === '#') return; // 页内锚点,走默认
+          if (/^https?:\/\//i.test(href)) { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener'); return; }
+          var m = href.match(/^\/?(?:embed\/)?([a-z0-9_-]+)\/?(#.*)?$/i);
+          if (m) {
+            e.preventDefault();
+            var slug = m[1], hash = m[2] || '';
+            try { parent.postMessage({ type: 'help-nav', slug: slug }, '*'); } catch (_) {}
+            location.href = '/embed/' + slug + '/' + hash;
+          }
+        });
+        // 打开/切换时把当前标题报给父窗口(抽屉头部同步)。
+        try { parent.postMessage({ type: 'help-ready', title: document.title }, '*'); } catch (_) {}
+      })();
+    </script>
+  </body>
+</html>

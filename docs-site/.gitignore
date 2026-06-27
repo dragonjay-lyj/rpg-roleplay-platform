@@ -1,0 +1,6 @@
+# build output + deps + astro cache (不入库;CF Pages / app 各自构建)
+node_modules/
+dist/
+.astro/
+.DS_Store
+npm-debug.log*

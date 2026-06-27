@@ -1,0 +1,17 @@
+{
+  "name": "stellatrix-docs",
+  "type": "module",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Stellatrix / RPG Roleplay 使用文档站 (docs.stellatrix.icu)",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.30.6",
+    "astro": "^5.6.1",
+    "sharp": "^0.33.5"
+  }
+}
