@@ -39,6 +39,38 @@ class ImmersiveTool(unittest.TestCase):
         from tools_dsl.chat_tool_router import _tavern_drops_tool
         self.assertFalse(_tavern_drops_tool("set_tavern_immersive"))
 
+    def test_executor_writes_persistent_column(self):
+        """LLM 工具必须把选择落持久列 game_saves.tavern_immersive(真相源),否则下回合
+        被新鲜列读覆盖、形同没改。save_id 解析得到 → 发 UPDATE。"""
+        import tools_dsl.command_tools_tavern as T
+        import platform_app.db as _db
+        captured = {}
+
+        class _FakeCur:
+            def execute(self, sql, params):
+                captured["sql"] = sql
+                captured["params"] = params
+
+        class _FakeDB:
+            def __enter__(self):
+                return _FakeCur()
+
+            def __exit__(self, *a):
+                return False
+
+        st = types.SimpleNamespace(data={"save_id": 77}, _save_id=77)
+        orig_resolve, orig_connect = T._resolve_user_id, _db.connect
+        T._resolve_user_id = lambda state, args: 42
+        _db.connect = lambda: _FakeDB()
+        try:
+            T._t_set_tavern_immersive(st, {"enabled": False, "save_id": 77})
+        finally:
+            T._resolve_user_id, _db.connect = orig_resolve, orig_connect
+        self.assertIn("update game_saves set tavern_immersive", captured.get("sql", ""))
+        self.assertEqual(list(captured["params"]), [False, 77, 42])
+        # in-memory 也仍同步(同回合兜底)
+        self.assertIs(st.data["tavern"]["immersive"], False)
+
 
 class ImmersivePromptInjection(unittest.TestCase):
     def _build(self, immersive, char="莉莉", via="state"):
@@ -65,11 +97,43 @@ class ImmersivePromptInjection(unittest.TestCase):
         finally:
             _reg.resolve_content_pack = orig
 
-    def test_override_only_when_on(self):
-        on = self._build(True)
-        off = self._build(False)
-        self.assertIn("沉浸式拟人模式", on)
-        self.assertNotIn("沉浸式拟人模式", off)
+    def _build_both(self, gm_immersive, state_immersive, char="莉莉"):
+        """同时设 gm._immersive_mode(列权威)与 state.data.tavern.immersive(加载态残留),
+        用于钉死「列=关 必须压过 state 残留=开」(假关闭根因)。"""
+        import agents.gm.master as M
+        import context_providers.registry as _reg
+        gm = M.GameMaster.__new__(M.GameMaster)
+        gm.user_id = None
+        gm._world_section_for_active_content = lambda: ""
+        gm._active_script_id = lambda: None
+        gm._immersive_mode = gm_immersive
+        tav = {"immersive": state_immersive}
+        if char:
+            tav["character"] = {"name": char}
+        gm._active_state = types.SimpleNamespace(data={"tavern": tav})
+        orig = _reg.resolve_content_pack
+        _reg.resolve_content_pack = lambda st: {"gm_policy": {"mode": "tavern_gm"}}
+        try:
+            return gm._build_system()
+        finally:
+            _reg.resolve_content_pack = orig
+
+    def test_stale_state_alone_does_not_trigger_override(self):
+        """【假关闭根因修复】加载态 state.data.tavern.immersive=True 是 migration 81 前的
+        旧工作树兜底,可能 stale(per-worker 缓存未失效 + 回合末 snapshot clobber)。修复后
+        只认列派生的权威 gm._immersive_mode;via='state' 残留 True 不再单独触发覆盖块。"""
+        out = self._build(True, via="state")   # 只设 state.immersive=True、不设 gm._immersive_mode
+        self.assertNotIn("沉浸式拟人模式", out)
+
+    def test_gm_flag_off_beats_stale_state_on(self):
+        """关闭按钮真正生效:列=关(gm._immersive_mode=False)压过 state 残留=开。"""
+        out = self._build_both(gm_immersive=False, state_immersive=True)
+        self.assertNotIn("沉浸式拟人模式", out)
+
+    def test_gm_flag_on_injects_regardless_of_state(self):
+        """列=开 → 注入,即便 state 残留=关(列权威单一真相源)。"""
+        out = self._build_both(gm_immersive=True, state_immersive=False)
+        self.assertIn("沉浸式拟人模式", out)
 
     def test_gm_flag_path_triggers_override(self):
         # chat_pipeline 新鲜读 DB → gm._immersive_mode 路径(权威,跨 worker 安全)

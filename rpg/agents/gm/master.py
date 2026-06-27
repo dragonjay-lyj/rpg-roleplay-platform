@@ -451,12 +451,16 @@ class GameMaster:
                         .replace("{char_name}", _char)
                         .replace("{style_block}", style_block)
                     )
-                    # 沉浸式拟人模式:确定性追加覆盖块。flag 来源(任一为真即开):
-                    #   1. self._immersive_mode —— chat_pipeline 每回合从 runtime_checkouts 新鲜读 DB
-                    #      后设上(绕开 per-worker state 缓存,跨 worker 安全,UI 端点即时生效);
-                    #   2. _state.data['tavern'].immersive —— 加载态兜底(LLM 工具 mutate 的同一位)。
-                    _tav = (((getattr(_state, "data", {}) or {}).get("tavern")) or {})
-                    if getattr(self, "_immersive_mode", False) or _tav.get("immersive"):
+                    # 沉浸式拟人模式:确定性追加覆盖块。真相源 = self._immersive_mode ——
+                    # chat_pipeline 每回合从持久列 game_saves.tavern_immersive【新鲜读 DB】后设上
+                    # (绕开 per-worker state 缓存,跨 worker 安全;UI 开关 / 确定性短语 / LLM 工具
+                    # 三路都落该列即时生效)。
+                    # ⚠️【假关闭根因修复】**不再** OR 读 _state.data['tavern'].immersive:那是
+                    # migration 81 前的旧工作树兜底,加载态会 stale —— per-worker 缓存未跨 worker
+                    # 失效 + 回合末 persist_runtime_state 用旧 in-memory snapshot 覆盖回 DB
+                    # (worldline-clobber 同源)。若 OR 它,玩家「关沉浸」被 stale True 顶回去,
+                    # 表现为「关闭按钮不生效、回复还在过度角色扮演」。只认列派生的 _immersive_mode。
+                    if getattr(self, "_immersive_mode", False):
                         _sys_tav += _IMMERSIVE_OVERRIDE.replace("{char_name}", _char)
                     return _sys_tav
             except Exception:

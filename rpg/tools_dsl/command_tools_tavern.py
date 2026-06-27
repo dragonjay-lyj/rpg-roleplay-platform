@@ -571,9 +571,11 @@ def _t_set_tavern_immersive(state: Any, args: dict) -> str:
     **绝不替玩家(persona)写动作/台词/心理**,而非小说式大段第三人称叙事。
     enabled=False:回到默认叙事基调。
 
-    只 mutate state.data['tavern'].immersive(由管线在锁内持久化进 state_snapshot,
-    逐回合不丢)。实际行为由 agents/gm/master.py._build_system 读此 flag、在 system prompt
-    里**确定性注入**对应指令实现(不依赖模型自己记住)。
+    真相源 = 持久列 game_saves.tavern_immersive(master._build_system 只读它派生的
+    _immersive_mode,跨回合/跨 worker 一致)。本工具把选择**落列**,与 UI 开关、确定性短语
+    两路同口径;只 mutate in-memory 会被回合管线下回合的新鲜列读覆盖(故必须写列)。
+    实际行为由 agents/gm/master.py._build_system 读 flag、在 system prompt 里**确定性注入**
+    对应指令实现(不依赖模型自己记住),次回合生效(当回合 system prompt 已构建)。
     """
     enabled = args.get("enabled", True)
     if isinstance(enabled, str):
@@ -581,6 +583,22 @@ def _t_set_tavern_immersive(state: Any, args: dict) -> str:
     enabled = bool(enabled)
     tavern = state.data.setdefault("tavern", {})
     tavern["immersive"] = enabled
+    # 落持久列(真相源)。save_id 由 dispatcher 在 save 级分支无条件覆盖为鉴权会话绑定值
+    # (见 _resolve_user_id 安全说明),LLM 无法借伪造 save_id 改他人对话档。
+    try:
+        save_id = args.get("save_id") or getattr(state, "_save_id", None) \
+            or (getattr(state, "data", {}) or {}).get("_active_save_id") \
+            or (getattr(state, "data", {}) or {}).get("save_id")
+        user_id = _resolve_user_id(state, args)
+        if save_id and user_id:
+            from platform_app.db import connect as _connect
+            with _connect() as _db:
+                _db.execute(
+                    "update game_saves set tavern_immersive=%s, updated_at=now() "
+                    "where id=%s and user_id=%s and save_kind='tavern'",
+                    (enabled, int(save_id), int(user_id)))
+    except Exception:
+        pass  # 列写失败不致命:in-memory 仍记录,下次 UI/短语操作可纠正
     return (
         "已开启沉浸式拟人模式:之后以真人(角色卡)口吻实时对话、只演你自己的角色与环境,绝不替玩家说话或行动。"
         if enabled else
