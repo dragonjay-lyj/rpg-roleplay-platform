@@ -5,8 +5,9 @@ import { getCollection, render } from 'astro:content';
 
 export async function getStaticPaths() {
   const docs = await getCollection('docs');
+  // 仅生成 zh(根)嵌入页 /embed/<slug>;排除 index 与 en/* 多段 id(app 内帮助用 zh)。
   return docs
-    .filter((e) => e.id !== 'index')
+    .filter((e) => e.id !== 'index' && !e.id.includes('/'))
     .map((entry) => ({ params: { slug: entry.id }, props: { entry } }));
 }
 
@@ -29,6 +30,40 @@ const title = entry.data.title ?? entry.id;
       <h1>{title}</h1>
       <Content />
     </article>
+    <div class="embed-feedback" id="embedFeedback">
+      <span class="ef-q">这对我有帮助？</span>
+      <button type="button" class="ef-btn" data-vote="up">有帮助</button>
+      <button type="button" class="ef-btn" data-vote="down">没帮助</button>
+      <span class="ef-done" hidden></span>
+    </div>
+    <style>
+      .embed-feedback { max-width: 760px; margin: 8px auto 28px; padding: 12px 22px 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--line); }
+      .ef-q { font-size: 13px; color: var(--ink-2); }
+      .ef-btn { font: inherit; font-size: 12px; cursor: pointer; padding: 4px 12px; border-radius: 7px; border: 1px solid var(--line); background: transparent; color: var(--ink); }
+      .ef-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .ef-done { font-size: 13px; color: var(--accent); }
+    </style>
+    <script is:inline>
+      (function () {
+        var box = document.getElementById('embedFeedback');
+        if (!box) return;
+        var actions = box.querySelectorAll('.ef-btn');
+        var done = box.querySelector('.ef-done');
+        box.querySelectorAll('[data-vote]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            var helpful = b.getAttribute('data-vote') === 'up';
+            fetch('/api/doc-feedback', { method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ helpful: helpful, page: location.pathname, lang: 'zh-CN' }) })
+              .then(function (r) { return r.ok; }).catch(function () { return false; })
+              .then(function (ok) {
+                actions.forEach(function (x) { x.hidden = true; });
+                box.querySelector('.ef-q').hidden = true;
+                done.textContent = ok ? '感谢你的反馈。' : '提交失败,请稍后再试。'; done.hidden = false;
+              });
+          });
+        });
+      })();
+    </script>
     <script is:inline>
       (function () {
         // 内部文档链接:留在 iframe 内跳 /embed/<slug>,并通知父抽屉同步标题。

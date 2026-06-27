@@ -3,9 +3,7 @@ title: "MCP 工具"
 description: "「MCP」页管理你配置的 MCP（Model Context Protocol）服务器。MCP 是一种让 GM 调用外部工具的标准协议，可以接入本地命令行程序或远程 HTTP 服务，为 GM 增加读取文件、查询 API、"
 ---
 
-## 这页能干嘛
-
-「MCP」页管理你配置的 MCP（Model Context Protocol）服务器。MCP 是一种让 GM 调用外部工具的标准协议，可以接入本地命令行程序或远程 HTTP 服务，为 GM 增加读取文件、查询 API、执行搜索等自定义能力。
+「MCP」页管理你配置的 MCP（Model Context Protocol）服务器。MCP 是一种让 GM 调用外部工具的标准协议，支持接入本地命令行程序或远程 HTTP 服务，为 GM 增加读取文件、查询 API、执行搜索等自定义能力。
 
 入口：左侧导航栏「MCP」（路由：`#mcp`）；移动端从「能力与反馈」顶部标签页切换至「MCP」。
 

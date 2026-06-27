@@ -1,9 +1,9 @@
 ---
-title: Stellatrix 使用文档
-description: 无限流剧情角色扮演平台完整使用文档 —— 剧本、卡牌、记忆、世界书、酒馆、剧本编辑器、自部署。
+title: RPG Roleplay 使用文档
+description: RPG Roleplay 完整使用文档 —— 剧本、卡牌、记忆、世界书、酒馆、剧本编辑器、自部署。
 ---
 
-欢迎使用 **Stellatrix / RPG Roleplay** —— 把任意小说变成可游玩的无限流剧情世界。左侧按板块浏览，或从这里快速进入：
+**RPG Roleplay** 把任意小说变成可游玩的无限流剧情世界。左侧按板块浏览，或从这里快速进入：
 
 ## 开始上手
 [新建向导](/wizard/) · [新建游戏向导](/new-game-wizard/) · [输入面板](/input/) · [后台任务](/tasks/)
