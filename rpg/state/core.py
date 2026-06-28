@@ -1018,6 +1018,30 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                 structured.pop(i)
                 break
 
+    def edit_memory(self, bucket: str, index: int, new_text: str) -> bool:
+        """就地改一条玩家记忆:同步 legacy bucket + 结构化 memory.items 里匹配的 active 条目。
+        与 remove_memory 同理 —— 只改 bucket 不改 items 会导致 GM 上下文(只读 items)仍读旧文本。"""
+        new_text = _clean_item(new_text)
+        if not new_text:
+            return False
+        items = self.data.get("memory", {}).get(bucket, [])
+        if not (0 <= index < len(items)) or not isinstance(items[index], str):
+            return False
+        old_text = _clean_item(items[index])
+        items[index] = new_text
+        structured = self.data.get("memory", {}).get("items")
+        if isinstance(structured, list) and old_text:
+            for it in structured:
+                if (
+                    isinstance(it, dict)
+                    and it.get("legacy_bucket") == bucket
+                    and (it.get("status") or "active") == "active"
+                    and _clean_item(str(it.get("text", ""))) == old_text
+                ):
+                    it["text"] = new_text
+                    break
+        return True
+
     # task 75：hypothesis 独立 namespace。codex §1 强调"推测不能混进事实"——
     # 这里给 hypothesis 提供专门的写/查/确认/拒绝 API，让 context_engine
     # 渲染层能明显区分"推测"和"事实"。

@@ -576,6 +576,9 @@ _state_by_user: OrderedDict[int, GameState] = OrderedDict()  # key = api_user["i
 # 之前只比 save_id 导致"同 save 内换 commit 缓存命中读旧 state"。
 _state_save_id_by_user: OrderedDict[int, int] = OrderedDict()
 _state_commit_id_by_user: OrderedDict[int, int] = OrderedDict()
+# 侧改漂移检测:out-of-turn 编辑(固定记忆/笔记增删等)bump runtime snapshot_hash 但不 bump
+# commit → 记本 worker 载入时的 snapshot_hash,与 DB 真值比对抓跨 worker 陈旧缓存。
+_state_snaphash_by_user: "OrderedDict[int, str]" = OrderedDict()
 _gm_by_user: OrderedDict[int, GameMaster] = OrderedDict()
 # B4: 子代理使用独立 GameMaster 实例，独立模型 / 独立 usage / 独立日志
 _sub_gm_by_user: OrderedDict[int, GameMaster] = OrderedDict()
@@ -856,7 +859,14 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                     (_rt_sm.get("model_id"), _rt_sm.get("api_id"))
                     != (_cur_sm.get("model_id"), _cur_sm.get("api_id"))
                 )
-                if save_drift or commit_drift or model_drift:
+                # 侧改漂移(跨 worker):固定记忆/笔记增删等 out-of-turn 编辑 bump runtime snapshot_hash
+                # 但**不 bump commit**(persist_runtime_state 设计上不建新回合),save/commit/model drift
+                # 都抓不到 → 另一 worker 缓存仍是旧 state,用户「删了固定记忆、加新的时已删的又回来」根因。
+                # snapshot_hash 是 DB 真值(read_runtime 已带,无额外查询),与载入时记的值不同即失效重载。
+                _rt_hash = _rt.get("snapshot_hash")
+                _cached_hash = _lru_get(_state_snaphash_by_user, uid)
+                hash_drift = bool(_rt_hash) and bool(_cached_hash) and _rt_hash != _cached_hash
+                if save_drift or commit_drift or model_drift or hash_drift:
                     cached = None
                 if model_drift:
                     _gm_by_user.pop(uid, None)
@@ -880,6 +890,18 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                     _lru_set(_state_commit_id_by_user, uid, _new_commit_id)
                 else:
                     _state_commit_id_by_user.pop(uid, None)
+                # 记本次载入对应的 runtime snapshot_hash(DB 真值),供下次侧改漂移检测
+                try:
+                    _ld_hash = (_runtime_meta or {}).get("snapshot_hash")
+                    if not _ld_hash and api_user:
+                        from platform_app.runtime import read_runtime as _rr
+                        _ld_hash = (_rr(user_id=api_user["id"]) or {}).get("snapshot_hash")
+                    if _ld_hash:
+                        _lru_set(_state_snaphash_by_user, uid, _ld_hash)
+                    else:
+                        _state_snaphash_by_user.pop(uid, None)
+                except Exception:
+                    _state_snaphash_by_user.pop(uid, None)
                 # Q KB-backed 存储集成(flag):state 从 KB 表 materialize(而非 blob)。
                 # 失败一律退回已加载的 blob state,绝不破回合。
                 if (_kb_state_enabled(api_user) or _save_kb_native(_new_save_id)) and _new_save_id and _new_commit_id:
@@ -891,6 +913,7 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                 state = GameState.new() if api_user else GameState.load_or_new()
                 _state_save_id_by_user.pop(uid, None)
                 _state_commit_id_by_user.pop(uid, None)
+                _state_snaphash_by_user.pop(uid, None)
             # Self-heal (Bug 1 click retest)：若 runtime 加载到的 state.player 为空
             # 但 game_saves.state_snapshot 有 player 数据，说明 runtime_checkouts
             # 没拿到完整 snapshot（可能在 activate 时序窗口里出问题）。

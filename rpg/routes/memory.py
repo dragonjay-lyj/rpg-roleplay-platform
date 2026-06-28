@@ -131,7 +131,9 @@ async def api_memory_update(
         return JSONResponse({"ok": False, "error": "条目不存在(可能已被修改,请刷新)"}, status_code=400)
     if not isinstance(items[index], str):
         return JSONResponse({"ok": False, "error": "该条目不是可编辑的文本"}, status_code=400)
-    items[index] = text
+    # 同步 legacy bucket + 结构化 items(否则 GM 上下文只读 items、看到旧文本)。
+    if not state.edit_memory(bucket, index, text):
+        return JSONResponse({"ok": False, "error": "编辑失败"}, status_code=400)
     state.save()
     _persist_runtime_checkpoint(state, api_user)
     return JSONResponse({"ok": True, "state": _payload(api_user)})

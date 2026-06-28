@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.28.3] - 2026-06-28 (@ e09cbbee0)
+
+### Fixed
+- **固定记忆/笔记 删改后「已删的又回来」(反复出现,群反馈 行者无疆)**:根因=跨 worker 缓存不感知 out-of-turn 编辑。`persist_runtime_state` 写固定记忆 bump `row_version` + runtime `snapshot_hash` 但**不 bump commit**(设计上 autosave 不建新回合),而 `_ensure_loaded` 的缓存一致性自检只比 save/commit/model → `workers=2` 下另一 worker 缓存仍是旧 state,"删 A→加 C"落在旧 [A,B] 上 → A 复活。修:缓存自检增加 **snapshot_hash 漂移**(DB 真值,`read_runtime` 已带、无额外查询),侧改后另一 worker 缓存即失效重载(与既有 model_drift 同款)。另:`edit_memory` 新方法让"改"也同步结构化 `memory.items`(原 `/api/memory/update` 只改 legacy bucket、GM 上下文读 items 看到旧文本)。回归测试覆盖 add/remove/edit 双写一致。
+
 ## [1.28.2] - 2026-06-28 (@ a5ac0c427)
 
 ### Fixed
