@@ -21,15 +21,24 @@ def _db_update_context_run_status(db, run_id: int, status: str, error: str, dura
 
 
 def _db_insert_turn_messages(db, session_id: int, save_id: int, turn: int, player_input: str, gm_output: str, metadata: dict[str, Any]) -> tuple:
-    """repository: 插入一对 user/assistant 消息，返回 (user_row, gm_row)。"""
-    user_msg = db.execute(
-        """
-        insert into messages(session_id, save_id, turn, role, content, metadata)
-        values (%s, %s, %s, 'user', %s, %s)
-        returning *
-        """,
-        (session_id, save_id, turn, player_input, Jsonb(metadata)),
-    ).fetchone()
+    """repository: 插入一对 user/assistant 消息，返回 (user_row, gm_row)。
+
+    开场（GM 主动起手）没有玩家输入，player_input 为空字符串。空 user 行会：
+      ① 让 kb_native 存档顶部出现一条空白玩家气泡（耀月余辉/星之游反馈）；
+      ② 使 messages 行数比 commit blob 的 history 多一条 → 消息编辑端点按下标对齐时错位。
+    blob 历史本就只落 assistant（routes/game.py 开场只 append assistant），这里对齐：
+    player_input 为空/纯空白时跳过 user 行，只记 assistant。
+    """
+    user_msg = None
+    if str(player_input or "").strip():
+        user_msg = db.execute(
+            """
+            insert into messages(session_id, save_id, turn, role, content, metadata)
+            values (%s, %s, %s, 'user', %s, %s)
+            returning *
+            """,
+            (session_id, save_id, turn, player_input, Jsonb(metadata)),
+        ).fetchone()
     gm_msg = db.execute(
         """
         insert into messages(session_id, save_id, turn, role, content, metadata)

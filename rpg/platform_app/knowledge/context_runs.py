@@ -84,7 +84,7 @@ def record_turn_messages(
     turn = int(state.get("turn") or 0)
     with connect() as db:
         user_msg, gm_msg = _db_insert_turn_messages(db, session["id"], save_id, turn, player_input, gm_output, metadata or {})
-    return {"user": expose(user_msg), "assistant": expose(gm_msg)}
+    return {"user": expose(user_msg) if user_msg else None, "assistant": expose(gm_msg)}
 
 
 def list_context_runs(user_id: int, save_id: int, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:

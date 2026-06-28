@@ -1175,6 +1175,38 @@ async def api_canon_delete(
 
 # ─── anchors CRUD ─────────────────────────────────────────────────────────────
 
+def _anchor_update_sets(body: dict) -> tuple[list[str], list]:
+    """从 PUT body 构造 anchor 更新的 (sets, args)。
+
+    字段名对称坑(反复报「无可更新字段」根因):摘要在列名 / GET / timeline / md-editor 里
+    一律叫 sample_summary,而旧 PUT 只认 API 名 summary → md-editor round-trip 回发的
+    sample_summary 被忽略,只改摘要时 sets 为空必报「无可更新字段」。这里两者都收
+    (优先 summary,回退 sample_summary),保持向后兼容。
+    """
+    sets: list[str] = []
+    args: list = []
+    if "summary" in body or "sample_summary" in body:
+        sets.append("sample_summary=%s")
+        args.append(str(body.get("summary", body.get("sample_summary"))))
+    for col in ("story_phase", "story_time_label", "sample_title"):
+        if col in body:
+            sets.append(f"{col}=%s")
+            args.append(str(body[col]))
+    for col in ("chapter_min", "chapter_max"):
+        if col in body:
+            sets.append(f"{col}=%s")
+            args.append(int(body[col]))
+    if "confidence" in body:
+        sets.append("confidence=%s")
+        args.append(float(body["confidence"]))
+    if "keywords" in body and isinstance(body["keywords"], list):
+        # keywords 列是 PostgreSQL 原生 text[](非 jsonb):psycopg 直接绑 Python list,
+        # 参数化 %s 传 list 即按数组写回;绝不可 json.dumps 当 jsonb 写。
+        sets.append("keywords=%s")
+        args.append([str(x) for x in body["keywords"]])
+    return sets, args
+
+
 @router.put("/api/scripts/{script_id}/anchors/{anchor_id}")
 async def api_anchor_update(
     request: Request, script_id: int, anchor_id: int, user=Depends(require_user)
@@ -1210,27 +1242,7 @@ async def api_anchor_update(
             return json_response({"ok": False, "error": "anchor 不存在"}, status_code=404)
 
         before = dict(before_row)
-        sets, args = [], []
-        # sample_summary → 字段名实际是 sample_summary
-        if "summary" in body:
-            sets.append("sample_summary=%s")
-            args.append(str(body["summary"]))
-        for col in ("story_phase", "story_time_label", "sample_title"):
-            if col in body:
-                sets.append(f"{col}=%s")
-                args.append(str(body[col]))
-        for col in ("chapter_min", "chapter_max"):
-            if col in body:
-                sets.append(f"{col}=%s")
-                args.append(int(body[col]))
-        if "confidence" in body:
-            sets.append("confidence=%s")
-            args.append(float(body["confidence"]))
-        if "keywords" in body and isinstance(body["keywords"], list):
-            # keywords 列是 PostgreSQL 原生 text[](非 jsonb):psycopg 直接绑 Python list,
-            # 参数化 %s 传 list 即按数组写回;绝不可 json.dumps 当 jsonb 写。
-            sets.append("keywords=%s")
-            args.append([str(x) for x in body["keywords"]])
+        sets, args = _anchor_update_sets(body)
 
         if not sets:
             return json_response(

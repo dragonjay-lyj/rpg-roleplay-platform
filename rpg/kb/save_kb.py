@@ -19,6 +19,8 @@
 """
 from __future__ import annotations
 
+import json
+
 from typing import Any
 
 from kb import live_repo, t0_seed
@@ -148,12 +150,42 @@ def materialize(db, save_id: int, commit_id: int) -> dict[str, Any]:
     state["relationships"] = {r["to_key"]: (r["metadata"] if r.get("metadata") else r["kind"])
                               for r in rels if r["from_key"] == "_player"}
 
-    # 历史 → messages(单一来源,不在 KB 重复;集成时还原成 state.data["history"] 供 GM 读)
-    msgs = db.execute(
-        "select role, content from messages where save_id = %s order by turn, id", (save_id,)
-    ).fetchall()
-    state["history"] = [{"role": m["role"], "content": m["content"]} for m in msgs]
-    state["_history_count"] = len(msgs)
+    # 历史 → 从【本 commit】的 state_snapshot blob 读(分支正确 + 开场只含 assistant)。
+    # 根因(星之游/耀月余辉反馈):messages 表按 (save_id, turn) 存、无分支维度,跨分支共享同一
+    # save_id → materialize 直接 `where save_id` 会把【所有分支】的消息都读出来:
+    #   ① 切/建分支后老分支的对话没消失(「新建分支又没删除老分支」);
+    #   ② 开场把空 player_input 也写进 messages → 顶部出现一条空白玩家气泡(「新建存档顶部空白输入」)。
+    # commit blob 按 commit DAG 逐分支隔离、且开场只 append assistant(routes/game.py),是非
+    # kb_native 路径一直在读的同一份历史 → 改读它,两个症状一并消除。
+    # blob 缺失/无 history 时回退 messages 并滤掉空行(冷迁移/旧档兜底,绝不破历史)。
+    history: list[dict[str, Any]] = []
+    try:
+        crow = db.execute(
+            "select state_snapshot from branch_commits where id = %s and save_id = %s",
+            (commit_id, save_id),
+        ).fetchone()
+        snap = crow.get("state_snapshot") if isinstance(crow, dict) else None
+        if isinstance(snap, str):
+            snap = json.loads(snap)
+        if isinstance(snap, dict) and isinstance(snap.get("history"), list):
+            history = [
+                {"role": m.get("role"), "content": m.get("content")}
+                for m in snap["history"]
+                if isinstance(m, dict) and str(m.get("content") or "").strip()
+            ]
+    except Exception:
+        history = []
+    if not history:
+        msgs = db.execute(
+            "select role, content from messages where save_id = %s order by turn, id", (save_id,)
+        ).fetchall()
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in msgs
+            if str(m["content"] or "").strip()
+        ]
+    state["history"] = history
+    state["_history_count"] = len(history)
 
     # 世界树实体(运行时可见;含 T0 seed)— 供 KB 查询,不属 blob 顶层
     state["_entities_visible"] = len(live_repo._newest_visible(db, "kb_entities", save_id, commit_id, ("logical_key",)))

@@ -9,6 +9,12 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.28.1] - 2026-06-28 (@ 7fa4ca6d4)
+
+### Fixed
+- **新建分支没删除老分支 / 新建存档顶部出现空白玩家输入（反复出现，深度审计）**:根因在 `kb/save_kb.py::materialize`。新存档自创建即 `kb_native=true`（`_seed_kb_at_creation`「封死新存档入口」），其会话历史走 `materialize()` 重建——而它从 `messages where save_id` 读历史。`messages` 表按 `(save_id, turn)` 存、**无分支维度**,同一存档的所有分支消息共享 `save_id` → ① 切/建分支后老分支对话仍被读出(「老分支没删」);② 开场把空 `player_input` 也落了 `messages` → 顶部一条空白玩家气泡。修:`materialize` 改从**本 commit 的 `state_snapshot` blob** 读历史(按 commit DAG 逐分支隔离、开场只含 assistant,与非 kb_native 路径同一份),blob 缺失才回退 `messages` 并滤空行;同时 `_db_insert_turn_messages` 开场不再写空 user 行(messages 与 blob 下标对齐,消息编辑端点不错位)。真库 e2e 复现跨分支污染 + 空开场并验证修复。
+- **剧本编辑器编辑时间线锚点保存失败「无可更新字段」**:锚点摘要 DB 列名 / GET / timeline / md-editor 往返全用 `sample_summary`,而 `PUT /api/scripts/{id}/anchors/{id}` 旧逻辑只认 API 名 `summary` → 编辑器回发的 `sample_summary` 被忽略,只改摘要时报错。修:`_anchor_update_sets` 两个名都收(优先 `summary`,回退 `sample_summary`)。
+
 ## [1.0.5] - 2026-06-19
 
 ### Fixed
