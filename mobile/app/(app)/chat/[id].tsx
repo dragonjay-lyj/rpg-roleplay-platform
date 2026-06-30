@@ -22,6 +22,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
+import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
 import { GrimoireBackdrop } from "@/components/GrimoireBackdrop";
 import { IconLabelButton } from "@/components/ui";
@@ -35,7 +36,7 @@ import { WorldCodex } from "@/components/WorldCodex";
 import { CodexOfTrials } from "@/components/CodexOfTrials";
 import { OracleFork, PendingQuestion } from "@/components/OracleFork";
 import { ModelEffortPicker } from "@/components/ModelEffortPicker";
-import { game, tavern, permissions } from "@/api";
+import { game, tavern, branches, permissions } from "@/api";
 import { SseController } from "@/api/sse";
 import { theme } from "@/theme/theme";
 import { ChatMessage, ToolEvent, normalizeHistory } from "@/state/chatModel";
@@ -104,9 +105,21 @@ export default function ChatScreen() {
   const draftIdRef = useRef<string | null>(null);
   const lastSentRef = useRef<{ text: string; atts: { name: string; type: string; data_url: string }[] } | null>(null);
 
+  const isNearBottomRef = useRef(true);
+
   const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
   }, []);
+
+  const handleScroll = useCallback((event: any) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const dist = contentSize.height - contentOffset.y - layoutMeasurement.height;
+    isNearBottomRef.current = dist < 80;
+  }, []);
+
+  const autoScrollIfNearBottom = useCallback(() => {
+    if (isNearBottomRef.current) scrollToEnd();
+  }, [scrollToEnd]);
 
   const boot = useCallback(async () => {
     setBootLoading(true);
@@ -350,16 +363,69 @@ export default function ChatScreen() {
     setMentionOpen(/@[^\s@]*$/.test(t) && relationNames.length > 0);
   }, [relationNames.length]);
 
-  // Long-press a past turn to revise it in place. Android lacks Alert.prompt, so we
-  // route through a dedicated edit state that swaps the composer into "editing" mode.
+  // Long-press a message: copy / edit / regenerate / delete-after.
   const editMsg = useCallback(
     (message: ChatMessage) => {
-      if (streaming || message.messageIndex == null) return;
+      if (streaming) return;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setEditTarget({ index: message.messageIndex, id: message.id });
-      setInput(message.text);
+
+      const isUser = message.role === "user";
+      const canEdit = message.messageIndex != null;
+      const actions: { text: string; style?: "destructive" | "cancel"; onPress?: () => void }[] = [];
+
+      actions.push({
+        text: "复制文本",
+        onPress: () => Clipboard.setStringAsync(message.text).catch(() => {}),
+      });
+
+      if (canEdit) {
+        actions.push({
+          text: "编辑此回合",
+          onPress: () => {
+            setEditTarget({ index: message.messageIndex!, id: message.id });
+            setInput(message.text);
+          },
+        });
+      }
+
+      if (!isUser) {
+        actions.push({
+          text: "重新生成",
+          onPress: () => retryLast(),
+        });
+      }
+
+      if (canEdit) {
+        actions.push({
+          text: "删除此回合及以后",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert("删除", "该回合及之后的对话将被删除，确定？", [
+              { text: "取消", style: "cancel" },
+              {
+                text: "删除", style: "destructive",
+                onPress: async () => {
+                  try {
+                    await branches.rollback(saveId, message.messageIndex!);
+                    boot();
+                  } catch (e) {
+                    Alert.alert("删除失败", e instanceof Error ? e.message : "请重试");
+                  }
+                },
+              },
+            ]);
+          },
+        });
+      }
+
+      actions.push({ text: "取消", style: "cancel" });
+      Alert.alert(
+        isUser ? "玩家发言" : "GM 回复",
+        message.text.slice(0, 80) + (message.text.length > 80 ? "…" : ""),
+        actions,
+      );
     },
-    [streaming],
+    [streaming, saveId, retryLast, boot],
   );
 
   const commitEdit = useCallback(async () => {
@@ -426,7 +492,9 @@ export default function ChatScreen() {
             keyExtractor={(m) => m.id}
             renderItem={({ item }) => <MessageBubble message={item} onLongPress={editMsg} onRetry={item.error ? retryLast : undefined} />}
             contentContainerStyle={{ paddingHorizontal: theme.space(5), paddingTop: theme.space(4), paddingBottom: theme.space(6) }}
-            onContentSizeChange={scrollToEnd}
+            onContentSizeChange={autoScrollIfNearBottom}
+            onScroll={handleScroll}
+            scrollEventThrottle={100}
             ListEmptyComponent={
               <Text style={styles.placeholder}>幕布升起，等待你的第一句话…</Text>
             }
