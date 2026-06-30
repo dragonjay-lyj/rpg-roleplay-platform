@@ -317,11 +317,15 @@ export const saves = {
   /** Player-driven advance: mark a non-fatal, in-window pending anchor as reached. */
   satisfyAnchor: (id: number, anchorKey: string) =>
     http.post<{ ok: boolean; error?: string }>(`${V1}/saves/${id}/anchors/${encodeURIComponent(anchorKey)}/satisfy`, {}),
+  /** Human-readable TXT export (game / tavern 通用, 皆 game_saves 行). */
+  exportTxtPath: (id: number) => `/api/saves/${id}/export/txt`,
 };
 
 export const tavernExport = {
   /** Absolute URL for a chat's JSONL export (downloaded with cookie auth by the caller). */
   jsonlPath: (chatId: number) => `/api/tavern/chats/${chatId}/export-jsonl`,
+  /** Human-readable TXT export — same save row, readable as a novel. */
+  txtPath: (chatId: number) => `/api/saves/${chatId}/export/txt`,
 };
 
 export type BranchNode = {

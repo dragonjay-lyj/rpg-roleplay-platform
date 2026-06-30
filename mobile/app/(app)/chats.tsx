@@ -113,6 +113,20 @@ export default function ChatsScreen() {
         },
       },
       {
+        text: "导出 TXT",
+        onPress: async () => {
+          try {
+            await downloadAndShare(
+              tavernExport.txtPath(chat.id),
+              `tavern-${chat.id}.txt`,
+              "text/plain",
+            );
+          } catch (e) {
+            Alert.alert("导出失败", e instanceof Error ? e.message : "请重试");
+          }
+        },
+      },
+      {
         text: "删除",
         style: "destructive",
         onPress: () =>
