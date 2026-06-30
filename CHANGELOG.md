@@ -9,6 +9,11 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-06-29
+
+### Added
+- **状态面板「能力 / 技能」可增删区**(群反馈,行者无疆「status 面板参数不可动 / 修来的能力只能写笔记?」):`memory.abilities` 桶其实 GM 检测到「掌握 / 习得」就会自动写(真库 save 268 已有 2 条修炼能力),但前端状态面板从不显示 → 用户以为没地方记。状态面板(NovelStatusProfile)新增「能力 / 技能」区:列出 `state.memory.abilities` + 右上「+」手动添加 + 逐条删除(复用既有 `/api/memory/add|remove` 的 abilities 桶,与固定记忆增删同款),中英 i18n。修来的能力终于有结构化的家。
+
 ## [1.31.3] - 2026-06-29
 
 ### Fixed

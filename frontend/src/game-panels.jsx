@@ -278,6 +278,9 @@ function NovelStatusProfile({ state }) {
   const timeline = w.timeline || {};
   const inventory = Array.isArray(p.inventory) ? p.inventory : [];
   const knownEvents = Array.isArray(w.known_events) ? w.known_events : [];
+  // 能力/技能 = memory.abilities 桶(GM 检测到「掌握/习得」会自动写,玩家也可手动增删)。
+  // 群反馈(行者无疆):状态面板参数只读,修来的能力没有结构化的家、只能塞玩家笔记 → 给它一个增删入口。
+  const abilities = (state && state.memory && Array.isArray(state.memory.abilities)) ? state.memory.abilities : [];
   const [playerExpanded, setPlayerExpanded] = React.useState(false);
 
   const hasDetail = !!(p.appearance || p.personality || p.speech_style || p.secrets || p.background || p.identity_role_desc);
@@ -370,6 +373,48 @@ function NovelStatusProfile({ state }) {
               </div>
             )}
           </div>
+        )}
+      </div>
+
+      {/* 能力 / 技能 — memory.abilities 桶(GM 检测「掌握/习得」会自动写,玩家也可手动增删)。
+          群反馈(行者无疆):状态参数只读、修来的能力没结构化的家 → 给个增删入口,不必只塞玩家笔记。 */}
+      <div className="gp-section">
+        <div className="section-head">
+          <h3>{t('game.status.abilities')}<span className="muted-2 mono" style={{marginLeft: 8, fontSize: 11}}>{abilities.length}</span></h3>
+          <button className="iconbtn" data-tip={t('game.status.add_ability_tip')} data-tip-pos="below" aria-label={t('game.status.add_ability_tip')}
+            onClick={async () => {
+              const txt = await window.__prompt({ title: t('game.status.add_ability_prompt') });
+              if (!txt || !txt.trim()) return;
+              try {
+                await window.api.game.memoryAdd({ bucket: "abilities", text: txt.trim() });
+                try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
+                window.__apiToast?.(t('game.status.ability_added'), { kind: "ok" });
+              } catch (e) { window.__apiToast?.(t('game.status.ability_add_failed'), { kind: "danger", detail: e?.message }); }
+            }}>
+            <Icon name="plus" size={12} />
+          </button>
+        </div>
+        {abilities.length === 0 ? (
+          <div className="muted-2" style={{padding: "10px 4px", fontSize: 12.5, lineHeight: 1.7}}>{t('game.status.abilities_empty')}</div>
+        ) : (
+          <ul className="gp-flat-list">
+            {abilities.map((ab, i) => (
+              <li key={i} style={{display: "flex", alignItems: "flex-start", gap: 6}}>
+                <span style={{flex: 1}}><Icon name="sparkle" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />{typeof ab === "string" ? ab : (ab?.text || ab?.name || JSON.stringify(ab))}</span>
+                <button className="iconbtn" data-tip={t('game.status.remove_ability_tip')} data-tip-pos="below" aria-label={t('game.status.remove_ability_tip')}
+                  onClick={async () => {
+                    if (!await window.__confirm({ message: t('game.status.remove_ability_confirm'), danger: true })) return;
+                    try {
+                      await window.api.game.memoryRemove({ bucket: "abilities", index: i });
+                      try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
+                      window.__apiToast?.(t('game.status.ability_removed'), { kind: "ok" });
+                    } catch (e) { window.__apiToast?.(t('game.status.ability_remove_failed'), { kind: "danger", detail: e?.message }); }
+                  }}>
+                  <Icon name="close" size={12} />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
